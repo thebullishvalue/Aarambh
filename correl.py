@@ -2122,80 +2122,47 @@ def main():
     
     else:
         # Landing page
-        st.markdown("""
-<div style="text-align: center; padding: 2rem 1rem;">
-    <h2 style="color: #FFC300; margin-bottom: 0.5rem;">Welcome to Regression Lab Pro</h2>
-    <p style="color: #888; font-size: 1rem; margin-bottom: 2rem;">
-        Multi-variable modeling & predictive analytics
-    </p>
-    
-    <p style="color: #666; font-size: 0.9rem; margin-bottom: 1.5rem;">
-        <b>Data Sources</b>
-    </p>
-    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; max-width: 500px; margin: 0 auto 2rem auto;">
-        <div class="metric-card" style="border-color: #FFC300;">
-            <h4>📤 Upload</h4>
-            <p style="font-size:0.8rem; color:#666;">CSV / Excel</p>
-        </div>
-        <div class="metric-card" style="border-color: #10b981;">
-            <h4>📊 Google Sheets</h4>
-            <p style="font-size:0.8rem; color:#666;">Direct URL</p>
-        </div>
-    </div>
-    
-    <p style="color: #666; font-size: 0.9rem; margin-bottom: 1rem;">
-        <b>Analysis Modules</b>
-    </p>
-    <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.75rem; margin-top: 1rem;">
-        <div class="metric-card">
-            <h4>📉</h4>
-            <p style="font-size:0.75rem; color:#666;">Residuals</p>
-        </div>
-        <div class="metric-card">
-            <h4>📊</h4>
-            <p style="font-size:0.75rem; color:#666;">Performance</p>
-        </div>
-        <div class="metric-card">
-            <h4>📐</h4>
-            <p style="font-size:0.75rem; color:#666;">Equation</p>
-        </div>
-        <div class="metric-card">
-            <h4>🔍</h4>
-            <p style="font-size:0.75rem; color:#666;">Predictions</p>
-        </div>
-        <div class="metric-card">
-            <h4>🌊</h4>
-            <p style="font-size:0.75rem; color:#666;">Moves</p>
-        </div>
-        <div class="metric-card">
-            <h4>🛠️</h4>
-            <p style="font-size:0.75rem; color:#666;">Diagnostics</p>
-        </div>
-    </div>
-    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin-top: 0.75rem;">
-        <div class="metric-card">
-            <h4>🔮</h4>
-            <p style="font-size:0.75rem; color:#666;">Simulate</p>
-        </div>
-        <div class="metric-card">
-            <h4>⚙️</h4>
-            <p style="font-size:0.75rem; color:#666;">Models</p>
-        </div>
-        <div class="metric-card">
-            <h4>📈</h4>
-            <p style="font-size:0.75rem; color:#666;">Rolling</p>
-        </div>
-        <div class="metric-card">
-            <h4>🧪</h4>
-            <p style="font-size:0.75rem; color:#666;">Features</p>
-        </div>
-        <div class="metric-card">
-            <h4>🏆</h4>
-            <p style="font-size:0.75rem; color:#666;">Compare</p>
-        </div>
-    </div>
-</div>
-        """, unsafe_allow_html=True)
+        st.markdown("""<div style="text-align: center; padding: 2rem 1rem;"><h2 style="color: #FFC300; margin-bottom: 0.5rem;">Welcome to Regression Lab Pro</h2><p style="color: #888; font-size: 1rem; margin-bottom: 2rem;">Multi-variable modeling & predictive analytics</p></div>""", unsafe_allow_html=True)
+        
+        st.markdown("""<p style="color: #666; font-size: 0.9rem; margin-bottom: 1rem; text-align:center;"><b>Data Sources</b></p>""", unsafe_allow_html=True)
+        
+        # Data sources using columns
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+        with col2:
+            st.markdown("""<div class="metric-card" style="border-color: #FFC300;"><h4>📤 Upload</h4><p style="font-size:0.8rem; color:#666;">CSV / Excel</p></div>""", unsafe_allow_html=True)
+        with col3:
+            st.markdown("""<div class="metric-card" style="border-color: #10b981;"><h4>📊 Google Sheets</h4><p style="font-size:0.8rem; color:#666;">Direct URL</p></div>""", unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("""<p style="color: #666; font-size: 0.9rem; margin-bottom: 1rem; text-align:center;"><b>Analysis Modules</b></p>""", unsafe_allow_html=True)
+        
+        # First row of modules (6 items)
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        with c1:
+            st.markdown("""<div class="metric-card"><h4>📉</h4><p style="font-size:0.75rem; color:#666;">Residuals</p></div>""", unsafe_allow_html=True)
+        with c2:
+            st.markdown("""<div class="metric-card"><h4>📊</h4><p style="font-size:0.75rem; color:#666;">Performance</p></div>""", unsafe_allow_html=True)
+        with c3:
+            st.markdown("""<div class="metric-card"><h4>📐</h4><p style="font-size:0.75rem; color:#666;">Equation</p></div>""", unsafe_allow_html=True)
+        with c4:
+            st.markdown("""<div class="metric-card"><h4>🔍</h4><p style="font-size:0.75rem; color:#666;">Predictions</p></div>""", unsafe_allow_html=True)
+        with c5:
+            st.markdown("""<div class="metric-card"><h4>🌊</h4><p style="font-size:0.75rem; color:#666;">Moves</p></div>""", unsafe_allow_html=True)
+        with c6:
+            st.markdown("""<div class="metric-card"><h4>🛠️</h4><p style="font-size:0.75rem; color:#666;">Diagnostics</p></div>""", unsafe_allow_html=True)
+        
+        # Second row of modules (5 items)
+        d1, d2, d3, d4, d5 = st.columns(5)
+        with d1:
+            st.markdown("""<div class="metric-card"><h4>🔮</h4><p style="font-size:0.75rem; color:#666;">Simulate</p></div>""", unsafe_allow_html=True)
+        with d2:
+            st.markdown("""<div class="metric-card"><h4>⚙️</h4><p style="font-size:0.75rem; color:#666;">Models</p></div>""", unsafe_allow_html=True)
+        with d3:
+            st.markdown("""<div class="metric-card"><h4>📈</h4><p style="font-size:0.75rem; color:#666;">Rolling</p></div>""", unsafe_allow_html=True)
+        with d4:
+            st.markdown("""<div class="metric-card"><h4>🧪</h4><p style="font-size:0.75rem; color:#666;">Features</p></div>""", unsafe_allow_html=True)
+        with d5:
+            st.markdown("""<div class="metric-card"><h4>🏆</h4><p style="font-size:0.75rem; color:#666;">Compare</p></div>""", unsafe_allow_html=True)
 
     # --- Footer ---
     st.markdown(f"""
