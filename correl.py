@@ -849,9 +849,32 @@ def main():
                 return
 
             st.sidebar.markdown("---")
-            target_col = st.sidebar.selectbox("🎯 Target (Y)", numeric_cols)
+            
+            # Default selections for Google Sheets
+            default_target = "NIFTY50_PE"
+            default_predictors = [
+                "AD_RATIO", "COUNT", "IN10Y", "IN02Y", "IN30Y", "INIRYY", 
+                "REPO", "CRR", "US02Y", "US10Y", "US30Y", "US_FED", 
+                "NIFTY50_DY", "NIFTY50_PB"
+            ]
+            
+            # Determine target default index
+            if default_target in numeric_cols:
+                target_default_idx = numeric_cols.index(default_target)
+            else:
+                target_default_idx = 0
+            
+            target_col = st.sidebar.selectbox("🎯 Target (Y)", numeric_cols, index=target_default_idx)
             available_features = [c for c in numeric_cols if c != target_col]
-            feature_cols = st.sidebar.multiselect("📊 Predictors (X)", available_features, default=available_features[:1])
+            
+            # Determine predictor defaults (only those that exist in data)
+            if data_source == "📊 Google Sheets":
+                valid_defaults = [p for p in default_predictors if p in available_features]
+                feature_default = valid_defaults if valid_defaults else available_features[:1]
+            else:
+                feature_default = available_features[:1]
+            
+            feature_cols = st.sidebar.multiselect("📊 Predictors (X)", available_features, default=feature_default)
             
             st.sidebar.markdown("---")
             date_candidates = [c for c in all_cols if 'date' in c.lower() or 'time' in c.lower()]
