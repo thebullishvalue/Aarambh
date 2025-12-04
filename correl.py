@@ -2013,6 +2013,174 @@ def main():
                 
                 st.markdown("---")
                 
+                # ---- BUSINESS INTERPRETATION OF CORRELATIONS ----
+                st.markdown("#### 🗣️ Business Interpretation")
+                
+                # Level Correlation Business Interpretation
+                level_corr_abs = abs(level_resid_corr)
+                level_direction = "positive" if level_resid_corr > 0 else "negative"
+                
+                # Determine practical impact
+                target_range = ts_df_sorted[target_col].max() - ts_df_sorted[target_col].min()
+                resid_range = ts_df_sorted['Deviation'].max() - ts_df_sorted['Deviation'].min()
+                
+                # Calculate how much residual changes per unit of target (regression slope)
+                if ts_df_sorted[target_col].std() > 0:
+                    level_slope = level_resid_corr * (ts_df_sorted['Deviation'].std() / ts_df_sorted[target_col].std())
+                else:
+                    level_slope = 0
+                
+                # Level correlation interpretation
+                if level_corr_abs < 0.1:
+                    level_sig_badge = '<span style="background:#10b981; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">IDEAL</span>'
+                    level_opacity = "1"
+                elif level_corr_abs < 0.3:
+                    level_sig_badge = '<span style="background:#f59e0b; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">MINOR</span>'
+                    level_opacity = "0.9"
+                else:
+                    level_sig_badge = '<span style="background:#ef4444; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">CONCERN</span>'
+                    level_opacity = "1"
+                
+                st.markdown(f"""
+                <div class="interpretation-item" style="opacity: {level_opacity};">
+                    <div class="interp-header">
+                        <span class="feature-tag">Target vs Level Residuals</span>
+                        {level_sig_badge}
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1px 1fr; gap: 1rem; color: #EAEAEA; font-size: 0.95rem;">
+                        <div>
+                            <div style="color:#888; font-size:0.8rem; margin-bottom:4px;">CORRELATION STRENGTH</div>
+                            The correlation coefficient is <b>r = {level_resid_corr:.3f}</b> ({level_direction}).<br>
+                            This means <b>{level_corr_abs*100:.1f}%</b> of the variation in residuals 
+                            can be explained by the {target_col} level itself.
+                        </div>
+                        <div style="background:var(--border-color);"></div>
+                        <div>
+                            <div style="color:#FFC300; font-size:0.8rem; margin-bottom:4px;">PRACTICAL IMPACT</div>
+                            For every <b>1 unit</b> increase in {target_col}, 
+                            the prediction error {"increases" if level_resid_corr > 0 else "decreases"} by approximately <b>{abs(level_slope):.4f}</b> units.
+                            {"<br><span style='color:#10b981;'>✓ Negligible impact on predictions.</span>" if level_corr_abs < 0.1 else "<br><span style='color:#f59e0b;'>⚠ Model accuracy varies by target level.</span>" if level_corr_abs < 0.3 else "<br><span style='color:#ef4444;'>⚠ Significant bias at extreme values.</span>"}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Move Correlation Business Interpretation
+                move_corr_abs = abs(move_resid_corr)
+                move_direction = "positive" if move_resid_corr > 0 else "negative"
+                
+                # Calculate slope for moves
+                if ts_delta_df['Actual_Move'].std() > 0:
+                    move_slope = move_resid_corr * (ts_delta_df['Move_Residual'].std() / ts_delta_df['Actual_Move'].std())
+                else:
+                    move_slope = 0
+                
+                # Typical move size for context
+                typical_move = ts_delta_df['Actual_Move'].std()
+                move_error_at_typical = abs(move_slope * typical_move)
+                
+                if move_corr_abs < 0.1:
+                    move_sig_badge = '<span style="background:#10b981; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">IDEAL</span>'
+                    move_opacity = "1"
+                elif move_corr_abs < 0.3:
+                    move_sig_badge = '<span style="background:#f59e0b; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">MINOR</span>'
+                    move_opacity = "0.9"
+                else:
+                    move_sig_badge = '<span style="background:#ef4444; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">CONCERN</span>'
+                    move_opacity = "1"
+                
+                st.markdown(f"""
+                <div class="interpretation-item" style="opacity: {move_opacity};">
+                    <div class="interp-header">
+                        <span class="feature-tag">Target Move vs Move Residuals</span>
+                        {move_sig_badge}
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1px 1fr; gap: 1rem; color: #EAEAEA; font-size: 0.95rem;">
+                        <div>
+                            <div style="color:#888; font-size:0.8rem; margin-bottom:4px;">CORRELATION STRENGTH</div>
+                            The correlation coefficient is <b>r = {move_resid_corr:.3f}</b> ({move_direction}).<br>
+                            {"<b>Positive correlation:</b> Model underestimates large upward moves and overestimates large downward moves." if move_resid_corr > 0.1 else "<b>Negative correlation:</b> Model overestimates large upward moves and underestimates large downward moves." if move_resid_corr < -0.1 else "<b>No pattern:</b> Model errors are independent of move size."}
+                        </div>
+                        <div style="background:var(--border-color);"></div>
+                        <div>
+                            <div style="color:#FFC300; font-size:0.8rem; margin-bottom:4px;">PRACTICAL IMPACT</div>
+                            A typical move of <b>±{typical_move:.2f}</b> units in {target_col} 
+                            is associated with an additional prediction error of <b>±{move_error_at_typical:.4f}</b> units.
+                            {"<br><span style='color:#10b981;'>✓ Model captures moves accurately.</span>" if move_corr_abs < 0.1 else "<br><span style='color:#f59e0b;'>⚠ Large moves are harder to predict.</span>" if move_corr_abs < 0.3 else "<br><span style='color:#ef4444;'>⚠ Model systematically misses big moves.</span>"}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Cross Correlation Business Interpretation
+                cross_corr_abs = abs(cross_corr)
+                cross_direction = "positive" if cross_corr > 0 else "negative"
+                
+                if cross_corr_abs < 0.1:
+                    cross_sig_badge = '<span style="background:#10b981; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">IDEAL</span>'
+                    cross_opacity = "1"
+                elif cross_corr_abs < 0.3:
+                    cross_sig_badge = '<span style="background:#f59e0b; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">MINOR</span>'
+                    cross_opacity = "0.9"
+                else:
+                    cross_sig_badge = '<span style="background:#ef4444; padding:2px 8px; border-radius:4px; font-size:0.75em; color:white;">CONCERN</span>'
+                    cross_opacity = "1"
+                
+                st.markdown(f"""
+                <div class="interpretation-item" style="opacity: {cross_opacity};">
+                    <div class="interp-header">
+                        <span class="feature-tag">Target Level vs Move Residuals (Cross)</span>
+                        {cross_sig_badge}
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1px 1fr; gap: 1rem; color: #EAEAEA; font-size: 0.95rem;">
+                        <div>
+                            <div style="color:#888; font-size:0.8rem; margin-bottom:4px;">WHAT THIS MEASURES</div>
+                            This cross-correlation tests if the <b>current level</b> of {target_col} 
+                            affects how well we predict <b>future changes</b>.<br>
+                            Correlation: <b>r = {cross_corr:.3f}</b> ({cross_direction})
+                        </div>
+                        <div style="background:var(--border-color);"></div>
+                        <div>
+                            <div style="color:#FFC300; font-size:0.8rem; margin-bottom:4px;">BUSINESS MEANING</div>
+                            {"<span style='color:#10b981;'>✓ Move predictions work equally well at all {target_col} levels.</span>".format(target_col=target_col) if cross_corr_abs < 0.1 else "<span style='color:#f59e0b;'>⚠ When {target_col} is {'high' if cross_corr > 0 else 'low'}, move predictions tend to {'underestimate' if cross_corr > 0 else 'overestimate'}.</span>".format(target_col=target_col) if cross_corr_abs < 0.3 else "<span style='color:#ef4444;'>⚠ Strong regime dependency: model behaves differently at different {target_col} levels. Consider regime-switching models.</span>".format(target_col=target_col)}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Bottom Line for Correlation Analysis
+                st.markdown("---")
+                
+                total_corr_issues = sum([level_corr_abs >= 0.3, move_corr_abs >= 0.3, cross_corr_abs >= 0.3])
+                
+                if total_corr_issues == 0:
+                    corr_verdict = "Residual correlations are healthy — model is well-specified"
+                    corr_explain = f"All three correlation tests show no significant relationship between {target_col} values and prediction errors. This means your model's accuracy is consistent regardless of whether {target_col} is high, low, rising, or falling."
+                    corr_next = [
+                        "No correlation-based adjustments needed",
+                        "Model is suitable for predictions across all value ranges",
+                        "Proceed to backtest and deployment"
+                    ]
+                    corr_type = "success"
+                elif total_corr_issues == 1:
+                    corr_verdict = "Minor correlation pattern detected — model is acceptable with caveats"
+                    corr_explain = f"One correlation test shows a pattern. The model may be slightly less accurate in certain conditions, but overall performance should be acceptable for most use cases."
+                    corr_next = corr_actions + ["Monitor prediction accuracy at extreme {target_col} values".format(target_col=target_col)]
+                    corr_type = "warning"
+                else:
+                    corr_verdict = "Multiple correlation issues — model specification may need revision"
+                    corr_explain = f"Multiple correlations suggest the linear model is missing important patterns. Prediction accuracy varies significantly depending on {target_col} values."
+                    corr_next = corr_actions + [
+                        "Consider non-linear transformations (log, polynomial)",
+                        "Try regime-switching or rolling regression approaches",
+                        "Add interaction terms between features and target level"
+                    ]
+                    corr_type = "danger"
+                
+                render_bottom_line("Bottom Line: Correlation Health", corr_verdict, corr_explain, corr_next, corr_type)
+                
+                st.markdown("---")
+                
                 # Calculate all residual statistics
                 mean_resid = ts_df_sorted['Deviation'].mean()
                 std_resid = ts_df_sorted['Deviation'].std()
