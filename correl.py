@@ -957,7 +957,7 @@ def main():
                                      line=dict(color="#FFC300", dash="dash"))
                     
                     fig_pred.update_traces(marker=dict(color="#06b6d4", size=8, opacity=0.7))
-                    st.plotly_chart(update_chart_theme(fig_pred), use_container_width=True)
+                    st.plotly_chart(update_chart_theme(fig_pred), width="stretch")
                 
                 with c_right:
                     st.markdown("""
@@ -1005,7 +1005,7 @@ def main():
                     "P-Value": "{:.4f}",
                     "[0.025": "{:.4f}",
                     "0.975]": "{:.4f}"
-                }), use_container_width=True)
+                }), width="stretch")
                 
                 st.info("💡 A low P-Value (< 0.05) indicates the feature is a meaningful predictor.")
                 
@@ -1060,7 +1060,7 @@ def main():
                     fig_hist = px.histogram(residuals, nbins=30, title="Residual Distribution",
                                           labels={'value': 'Residual Error'})
                     fig_hist.update_traces(marker_color='#FFC300')
-                    st.plotly_chart(update_chart_theme(fig_hist), use_container_width=True)
+                    st.plotly_chart(update_chart_theme(fig_hist), width="stretch")
                 with c2:
                     jb_stat, jb_pval = stats.jarque_bera(residuals)
                     normality_status = "Normal" if jb_pval > 0.05 else "Non-Normal"
@@ -1077,7 +1077,7 @@ def main():
                                        title="Residuals vs Predicted")
                     fig_res.add_hline(y=0, line_dash="dash", line_color="#ef4444")
                     fig_res.update_traces(marker=dict(color="#06b6d4", size=7))
-                    st.plotly_chart(update_chart_theme(fig_res), use_container_width=True)
+                    st.plotly_chart(update_chart_theme(fig_res), width="stretch")
                 with c2:
                     try:
                         bp_stat, bp_pval, _, _ = het_breuschpagan(residuals, sm.add_constant(data[feature_cols]))
@@ -1106,7 +1106,7 @@ def main():
                             vif = variance_inflation_factor(X_vif.values, i)
                             vif_data.append({'Feature': col, 'VIF': vif})
                         vif_df = pd.DataFrame(vif_data)
-                        st.dataframe(vif_df.style.format({'VIF': '{:.2f}'}), use_container_width=True)
+                        st.dataframe(vif_df.style.format({'VIF': '{:.2f}'}), width="stretch")
                         st.caption("VIF > 5 indicates problematic multicollinearity. VIF > 10 is severe.")
                     except:
                         st.info("VIF calculation failed.")
@@ -1127,7 +1127,7 @@ def main():
                 with c1:
                     fig_dev = px.histogram(analysis_df['Deviation'], nbins=30, title="Prediction Errors")
                     fig_dev.add_vline(x=0, line_dash="dash", line_color="#FFC300")
-                    st.plotly_chart(update_chart_theme(fig_dev), use_container_width=True)
+                    st.plotly_chart(update_chart_theme(fig_dev), width="stretch")
                 with c2:
                     mean_dev = analysis_df['Deviation'].mean()
                     style = "info" if abs(mean_dev) < 0.1 else ("success" if mean_dev > 0 else "danger")
@@ -1161,7 +1161,7 @@ def main():
                 fig_resid_time.add_hline(y=0, line_color="#EAEAEA", line_width=1, opacity=0.5)
                 fig_resid_time.update_traces(marker_line_width=0) 
                 fig_resid_time.update_layout(coloraxis_showscale=False)
-                st.plotly_chart(update_chart_theme(fig_resid_time), use_container_width=True)
+                st.plotly_chart(update_chart_theme(fig_resid_time), width="stretch")
 
                 st.markdown("---")
                 
@@ -1174,11 +1174,11 @@ def main():
 
                 with c_top:
                     st.markdown("**Top Under-Predictions** (Actual >> Predicted)")
-                    st.dataframe(analysis_df.nlargest(5, 'Deviation')[disp_cols], use_container_width=True)
+                    st.dataframe(analysis_df.nlargest(5, 'Deviation')[disp_cols], width="stretch")
                     
                 with c_bot:
                     st.markdown("**Top Over-Predictions** (Actual << Predicted)")
-                    st.dataframe(analysis_df.nsmallest(5, 'Deviation')[disp_cols], use_container_width=True)
+                    st.dataframe(analysis_df.nsmallest(5, 'Deviation')[disp_cols], width="stretch")
 
             # ================================================================
             # TAB 5: MOVES (Delta Analysis)
@@ -1230,7 +1230,7 @@ def main():
                     fig_delta.add_shape(type="line", x0=min_m, y0=min_m, x1=max_m, y1=max_m,
                                        line=dict(color="#FFC300", dash="dash"))
                     fig_delta.update_traces(marker=dict(color="#06b6d4", size=8))
-                    st.plotly_chart(update_chart_theme(fig_delta), use_container_width=True)
+                    st.plotly_chart(update_chart_theme(fig_delta), width="stretch")
 
                 with c2:
                     move_corr, _ = stats.pearsonr(delta_df['Actual_Move'], delta_df['Predicted_Move'])
@@ -1260,7 +1260,7 @@ def main():
                 fig_move_resid.add_hline(y=0, line_color="#EAEAEA", opacity=0.5)
                 fig_move_resid.update_traces(marker_line_width=0)
                 fig_move_resid.update_layout(coloraxis_showscale=False)
-                st.plotly_chart(update_chart_theme(fig_move_resid), use_container_width=True)
+                st.plotly_chart(update_chart_theme(fig_move_resid), width="stretch")
 
             # ================================================================
             # TAB 1: RESIDUALS (Primary Analysis View)
@@ -1320,7 +1320,7 @@ def main():
                 fig_resid_ts.add_hline(y=0, line_color="#EAEAEA", line_width=1, opacity=0.5)
                 fig_resid_ts.update_traces(marker_line_width=0)
                 fig_resid_ts.update_layout(coloraxis_showscale=False, height=400)
-                st.plotly_chart(update_chart_theme(fig_resid_ts), use_container_width=True)
+                st.plotly_chart(update_chart_theme(fig_resid_ts), width="stretch")
                 
                 # Stats for Level Residuals
                 c1, c2, c3, c4 = st.columns(4)
@@ -1359,7 +1359,7 @@ def main():
                 fig_move_ts.add_hline(y=0, line_color="#EAEAEA", opacity=0.5)
                 fig_move_ts.update_traces(marker_line_width=0)
                 fig_move_ts.update_layout(coloraxis_showscale=False, height=400)
-                st.plotly_chart(update_chart_theme(fig_move_ts), use_container_width=True)
+                st.plotly_chart(update_chart_theme(fig_move_ts), width="stretch")
                 
                 # Stats for Move Residuals
                 c1, c2, c3, c4 = st.columns(4)
@@ -1391,7 +1391,7 @@ def main():
                 fig_cumul.add_hline(y=0, line_dash="dash", line_color="#FFC300", opacity=0.7)
                 fig_cumul.update_traces(line=dict(color='#06b6d4', width=2))
                 fig_cumul.update_layout(height=350)
-                st.plotly_chart(update_chart_theme(fig_cumul), use_container_width=True)
+                st.plotly_chart(update_chart_theme(fig_cumul), width="stretch")
                 
                 # Drift interpretation
                 final_cumul = ts_df_sorted['Cumulative_Residual'].iloc[-1]
@@ -1491,7 +1491,7 @@ def main():
                                 fig_bt.add_trace(go.Scatter(x=test_df.index, y=test_preds, mode='lines',
                                                            name='Test Prediction', line=dict(color='#00E396')))
                                 fig_bt.add_vline(x=split_idx, line_dash="dash", line_color="#FFC300")
-                                st.plotly_chart(update_chart_theme(fig_bt), use_container_width=True)
+                                st.plotly_chart(update_chart_theme(fig_bt), width="stretch")
                                 
                             with c2:
                                 render_metric("Train RMSE", f"{train_rmse:.4f}", "In-Sample", "info")
@@ -1529,7 +1529,7 @@ def main():
                                     'RMSE': '{:.4f}',
                                     'MAE': '{:.4f}',
                                     'Dir Accuracy': '{:.2%}'
-                                }), use_container_width=True)
+                                }), width="stretch")
                                 
                                 # Summary metrics
                                 c1, c2, c3, c4 = st.columns(4)
@@ -1554,7 +1554,7 @@ def main():
                                     yaxis=dict(title='R²'),
                                     yaxis2=dict(title='RMSE', overlaying='y', side='right')
                                 )
-                                st.plotly_chart(update_chart_theme(fig_wf), use_container_width=True)
+                                st.plotly_chart(update_chart_theme(fig_wf), width="stretch")
                             else:
                                 st.error("Walk-forward analysis failed.")
 
@@ -1612,7 +1612,7 @@ def main():
                                                            marker=dict(color='#06b6d4', size=5)))
                                 
                                 fig_mc.update_layout(title="Monte Carlo Prediction Confidence Bands")
-                                st.plotly_chart(update_chart_theme(fig_mc), use_container_width=True)
+                                st.plotly_chart(update_chart_theme(fig_mc), width="stretch")
                                 
                                 # Coverage statistics
                                 in_95_ci = ((actual_vals >= mc_results['ci_lower']) & 
@@ -1731,7 +1731,7 @@ def main():
                             render_metric("MAE", f"{adv_mae:.4f}", "Abs Error", "success")
                         
                         st.markdown("**Coefficients:**")
-                        st.dataframe(coef_df.style.format({'Coefficient': '{:.4f}'}), use_container_width=True)
+                        st.dataframe(coef_df.style.format({'Coefficient': '{:.4f}'}), width="stretch")
                         
                         # Comparison with OLS
                         st.markdown("---")
@@ -1755,7 +1755,7 @@ def main():
                         fig_adv.add_shape(type="line", x0=min_v, y0=min_v, x1=max_v, y1=max_v,
                                          line=dict(color="#FFC300", dash="dash"))
                         fig_adv.update_traces(marker=dict(color="#06b6d4", size=8))
-                        st.plotly_chart(update_chart_theme(fig_adv), use_container_width=True)
+                        st.plotly_chart(update_chart_theme(fig_adv), width="stretch")
 
             # ================================================================
             # TAB 9: ROLLING
@@ -1794,7 +1794,7 @@ def main():
                                                 title="Rolling R² (Model Fit Over Time)")
                                 fig_r2.add_hline(y=rolling_df['r_squared'].mean(), line_dash="dash", 
                                                line_color="#FFC300", annotation_text="Mean R²")
-                                st.plotly_chart(update_chart_theme(fig_r2), use_container_width=True)
+                                st.plotly_chart(update_chart_theme(fig_r2), width="stretch")
                                 
                                 # Coefficient evolution
                                 st.markdown("#### Coefficient Evolution")
@@ -1813,7 +1813,7 @@ def main():
                                     ))
                                 
                                 fig_coef.update_layout(title="Rolling Coefficients Over Time")
-                                st.plotly_chart(update_chart_theme(fig_coef), use_container_width=True)
+                                st.plotly_chart(update_chart_theme(fig_coef), width="stretch")
                                 
                                 # Structural break detection
                                 st.markdown("#### Structural Break Detection")
@@ -1846,7 +1846,7 @@ def main():
                                 st.dataframe(summary_df.style.format({
                                     'Mean': '{:.4f}', 'Std Dev': '{:.4f}',
                                     'Min': '{:.4f}', 'Max': '{:.4f}', 'Range': '{:.4f}'
-                                }), use_container_width=True)
+                                }), width="stretch")
                             else:
                                 st.error("Rolling regression failed.")
 
@@ -1946,7 +1946,7 @@ def main():
                             # Preview
                             preview_cols = [target_col] + eng_cols + new_features[:5]
                             preview_cols = [c for c in preview_cols if c in eng_data.columns]
-                            st.dataframe(eng_data[preview_cols].head(10), use_container_width=True)
+                            st.dataframe(eng_data[preview_cols].head(10), width="stretch")
                             
                             st.markdown(f"**New Features:** {', '.join(new_features)}")
                     
@@ -1972,7 +1972,7 @@ def main():
                             line=dict(color='#06b6d4')
                         ))
                         fig_pca.update_layout(title="PCA Explained Variance")
-                        st.plotly_chart(update_chart_theme(fig_pca), use_container_width=True)
+                        st.plotly_chart(update_chart_theme(fig_pca), width="stretch")
                         
                         # Recommendation
                         for i, cum_var in enumerate(pca_results['cumulative_variance']):
@@ -2048,7 +2048,7 @@ def main():
                                     'MAE': '{:.4f}',
                                     'F-stat': '{:.2f}',
                                     'F p-val': '{:.4e}'
-                                }), use_container_width=True)
+                                }), width="stretch")
                                 
                                 # Winner announcement
                                 best_model = comparison_df.loc[best_aic_idx, 'Model']
@@ -2071,7 +2071,7 @@ def main():
                                                         marker_color='#10b981'), row=1, col=3)
                                 
                                 fig_comp.update_layout(showlegend=False, height=400)
-                                st.plotly_chart(update_chart_theme(fig_comp), use_container_width=True)
+                                st.plotly_chart(update_chart_theme(fig_comp), width="stretch")
                                 
                                 # Nested F-test (if applicable)
                                 st.markdown("---")
