@@ -320,6 +320,275 @@ load_css()
 
 # --- Helper Functions ---
 
+# ============================================================================
+# INTELLIGENT INTERPRETATION SYSTEM
+# ============================================================================
+
+def interpret_r_squared(r2, adj_r2):
+    """Generate dynamic interpretation of R-squared values."""
+    if r2 >= 0.9:
+        strength = "excellent"
+        emoji = "🎯"
+        action = "Your model explains the vast majority of variance. This is production-ready for forecasting."
+    elif r2 >= 0.7:
+        strength = "strong"
+        emoji = "✅"
+        action = "Your model captures most of the relationship. Consider if additional predictors could push it higher."
+    elif r2 >= 0.5:
+        strength = "moderate"
+        emoji = "📊"
+        action = "The model explains about half the variance. Look for missing variables or non-linear relationships."
+    elif r2 >= 0.3:
+        strength = "weak"
+        emoji = "⚠️"
+        action = "Significant unexplained variance exists. Consider adding more predictors or transforming variables."
+    else:
+        strength = "very weak"
+        emoji = "❌"
+        action = "The model explains little variance. The predictors may not be relevant, or the relationship is non-linear."
+    
+    # Check for overfitting
+    overfit_gap = r2 - adj_r2
+    overfit_warning = ""
+    if overfit_gap > 0.05:
+        overfit_warning = f" ⚠️ Gap between R² and Adj R² ({overfit_gap:.3f}) suggests possible overfitting — you may have too many predictors."
+    
+    return f"{emoji} **{strength.title()} Fit** (R² = {r2:.1%}): {action}{overfit_warning}"
+
+def interpret_p_value(p_val, context="model"):
+    """Interpret p-value in plain English."""
+    if p_val < 0.001:
+        return f"Highly significant (p < 0.001) — extremely strong statistical evidence"
+    elif p_val < 0.01:
+        return f"Very significant (p < 0.01) — very strong statistical evidence"
+    elif p_val < 0.05:
+        return f"Significant (p < 0.05) — sufficient statistical evidence"
+    elif p_val < 0.10:
+        return f"Marginally significant (p < 0.10) — weak evidence, interpret with caution"
+    else:
+        return f"Not significant (p = {p_val:.3f}) — insufficient evidence of a real relationship"
+
+def interpret_coefficient(coef, feat_name, target_name, std_dev, p_val):
+    """Generate plain English interpretation of a coefficient."""
+    direction = "increases" if coef > 0 else "decreases"
+    abs_coef = abs(coef)
+    impact_1sd = abs(coef * std_dev)
+    
+    sig_status = "✅" if p_val < 0.05 else "⚠️ (not statistically significant)"
+    
+    interpretation = f"""
+**{feat_name}** {sig_status}
+- For every 1-unit increase in {feat_name}, {target_name} {direction} by **{abs_coef:.4f}**
+- A typical fluctuation (±1 std dev = {std_dev:.2f}) moves {target_name} by **±{impact_1sd:.4f}**
+"""
+    return interpretation
+
+def interpret_residuals(mean_resid, std_resid, pos_pct, drift):
+    """Interpret residual patterns and provide actionable insights."""
+    insights = []
+    actions = []
+    
+    # Bias check
+    if abs(mean_resid) > std_resid * 0.1:
+        if mean_resid > 0:
+            insights.append("📈 Model tends to **under-predict** (actual values are higher than predicted)")
+            actions.append("Consider if there's a missing upward factor not captured by your predictors")
+        else:
+            insights.append("📉 Model tends to **over-predict** (actual values are lower than predicted)")
+            actions.append("Consider if there's a missing downward factor not captured by your predictors")
+    else:
+        insights.append("✅ Model predictions are **unbiased** on average")
+    
+    # Balance check
+    if pos_pct > 60:
+        insights.append(f"⚠️ {pos_pct:.0f}% of residuals are positive — systematic under-prediction")
+    elif pos_pct < 40:
+        insights.append(f"⚠️ {100-pos_pct:.0f}% of residuals are negative — systematic over-prediction")
+    else:
+        insights.append("✅ Residuals are well-balanced between positive and negative")
+    
+    # Drift check
+    if abs(drift) > std_resid * 2:
+        insights.append("🚨 **Cumulative drift detected** — model bias is growing over time")
+        actions.append("The relationship may be changing. Consider rolling regression or regime detection.")
+    
+    return insights, actions
+
+def interpret_diagnostics(jb_pval, bp_pval, dw_stat, max_vif):
+    """Provide actionable diagnostic interpretation."""
+    issues = []
+    recommendations = []
+    
+    # Normality
+    if jb_pval < 0.05:
+        issues.append("❌ Residuals are **not normally distributed**")
+        recommendations.append("Consider robust standard errors or transform your target variable (log, sqrt)")
+    else:
+        issues.append("✅ Residuals are approximately **normally distributed**")
+    
+    # Heteroscedasticity
+    if bp_pval is not None:
+        if bp_pval < 0.05:
+            issues.append("❌ **Heteroscedasticity detected** — error variance changes with predictions")
+            recommendations.append("Use robust standard errors (HC3) or weighted least squares")
+        else:
+            issues.append("✅ **Homoscedastic** — constant error variance (good)")
+    
+    # Autocorrelation
+    if dw_stat < 1.5:
+        issues.append("❌ **Positive autocorrelation** — errors are correlated over time")
+        recommendations.append("Add lagged variables or use time-series methods (ARIMA, etc.)")
+    elif dw_stat > 2.5:
+        issues.append("❌ **Negative autocorrelation** — unusual pattern in errors")
+        recommendations.append("Check for over-differencing or model misspecification")
+    else:
+        issues.append("✅ **No autocorrelation** — errors are independent (good)")
+    
+    # Multicollinearity
+    if max_vif is not None:
+        if max_vif > 10:
+            issues.append(f"🚨 **Severe multicollinearity** (VIF = {max_vif:.1f})")
+            recommendations.append("Remove or combine highly correlated predictors, or use Ridge regression")
+        elif max_vif > 5:
+            issues.append(f"⚠️ **Moderate multicollinearity** (VIF = {max_vif:.1f})")
+            recommendations.append("Consider removing one of the correlated predictors")
+        else:
+            issues.append("✅ **No multicollinearity issues** (VIF < 5)")
+    
+    return issues, recommendations
+
+def interpret_backtest(train_rmse, test_rmse, train_r2, test_r2):
+    """Interpret backtesting results."""
+    rmse_change = ((test_rmse - train_rmse) / train_rmse) * 100
+    r2_change = ((test_r2 - train_r2) / train_r2) * 100 if train_r2 > 0 else 0
+    
+    if rmse_change > 30:
+        status = "🚨 **Severe Overfitting**"
+        explanation = f"Test error is {rmse_change:.0f}% higher than training. The model memorized the training data."
+        action = "Simplify your model: remove predictors, use regularization (Ridge/Lasso), or get more data."
+    elif rmse_change > 15:
+        status = "⚠️ **Moderate Overfitting**"
+        explanation = f"Test error is {rmse_change:.0f}% higher than training. Some overfitting present."
+        action = "Consider removing the least significant predictors or using regularization."
+    elif rmse_change < -10:
+        status = "🤔 **Unusual: Test Better Than Train**"
+        explanation = f"Test error is {abs(rmse_change):.0f}% lower than training. This is unusual."
+        action = "Check if your test period has lower volatility or if there's data leakage."
+    else:
+        status = "✅ **Robust Model**"
+        explanation = f"Test and training performance are similar (±{abs(rmse_change):.0f}%)."
+        action = "Your model generalizes well. Safe to use for forecasting."
+    
+    return status, explanation, action
+
+def generate_model_summary(model, r2, adj_r2, rmse, f_pval, n_obs, n_features, target_name):
+    """Generate an executive summary of the model."""
+    
+    # Overall verdict
+    if r2 >= 0.7 and f_pval < 0.05:
+        verdict = "🟢 **STRONG MODEL** — Ready for use"
+        verdict_detail = "High explanatory power with statistical significance."
+    elif r2 >= 0.5 and f_pval < 0.05:
+        verdict = "🟡 **MODERATE MODEL** — Use with caution"
+        verdict_detail = "Decent fit but significant unexplained variance remains."
+    elif f_pval >= 0.05:
+        verdict = "🔴 **WEAK MODEL** — Not recommended"
+        verdict_detail = "Model is not statistically significant. Predictors may not be relevant."
+    else:
+        verdict = "🟠 **LIMITED MODEL** — Needs improvement"
+        verdict_detail = "Low explanatory power. Consider different predictors or transformations."
+    
+    summary = f"""
+### 📋 Model Summary
+
+{verdict}
+{verdict_detail}
+
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| R² | {r2:.1%} | Model explains {r2:.1%} of {target_name} variance |
+| Adj R² | {adj_r2:.1%} | Adjusted for {n_features} predictors |
+| RMSE | {rmse:.4f} | Average prediction error magnitude |
+| Significance | p = {f_pval:.4f} | {interpret_p_value(f_pval)} |
+| Sample Size | {n_obs} | {"✅ Adequate" if n_obs > 30 else "⚠️ Small sample"} |
+
+"""
+    return summary, verdict
+
+def generate_action_items(model, diagnostics_ok, overfit_risk, significant_features, insignificant_features):
+    """Generate prioritized action items based on analysis."""
+    actions = []
+    
+    # Priority 1: Model validity
+    if not diagnostics_ok:
+        actions.append("🔴 **Fix diagnostic issues first** — Your statistical tests may be unreliable")
+    
+    # Priority 2: Overfitting
+    if overfit_risk:
+        actions.append("🟠 **Address overfitting** — Remove weak predictors or use regularization")
+    
+    # Priority 3: Feature refinement
+    if insignificant_features:
+        actions.append(f"🟡 **Consider removing**: {', '.join(insignificant_features)} (not statistically significant)")
+    
+    # Priority 4: Next steps
+    if len(significant_features) > 0:
+        actions.append(f"🟢 **Key drivers identified**: {', '.join(significant_features)}")
+    
+    return actions
+
+def render_insight_box(title, content, box_type="info"):
+    """Render a styled insight box."""
+    colors = {
+        "success": ("#10b981", "rgba(16, 185, 129, 0.1)"),
+        "warning": ("#f59e0b", "rgba(245, 158, 11, 0.1)"),
+        "danger": ("#ef4444", "rgba(239, 68, 68, 0.1)"),
+        "info": ("#06b6d4", "rgba(6, 182, 212, 0.1)"),
+        "primary": ("#FFC300", "rgba(255, 195, 0, 0.1)")
+    }
+    border_color, bg_color = colors.get(box_type, colors["info"])
+    
+    st.markdown(f"""
+    <div style="background: {bg_color}; border-left: 4px solid {border_color}; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+        <h4 style="color: {border_color}; margin: 0 0 0.5rem 0;">{title}</h4>
+        <p style="color: #EAEAEA; margin: 0; font-size: 0.95rem; line-height: 1.6;">{content}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_bottom_line(title, verdict, explanation, next_steps, verdict_type="info"):
+    """Render a comprehensive bottom-line summary box."""
+    colors = {
+        "success": ("#10b981", "rgba(16, 185, 129, 0.08)"),
+        "warning": ("#f59e0b", "rgba(245, 158, 11, 0.08)"),
+        "danger": ("#ef4444", "rgba(239, 68, 68, 0.08)"),
+        "info": ("#06b6d4", "rgba(6, 182, 212, 0.08)"),
+        "primary": ("#FFC300", "rgba(255, 195, 0, 0.08)")
+    }
+    border_color, bg_color = colors.get(verdict_type, colors["info"])
+    
+    steps_html = "".join([f"<li style='margin-bottom: 0.3rem;'>{step}</li>" for step in next_steps]) if next_steps else ""
+    
+    st.markdown(f"""
+    <div style="background: {bg_color}; border: 1px solid {border_color}; border-radius: 12px; padding: 1.5rem; margin: 1.5rem 0;">
+        <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+            <span style="font-size: 1.5rem; margin-right: 0.75rem;">📋</span>
+            <h3 style="color: {border_color}; margin: 0; font-size: 1.1rem;">{title}</h3>
+        </div>
+        <div style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+            <p style="color: #EAEAEA; margin: 0; font-size: 1.1rem; font-weight: 600;">{verdict}</p>
+        </div>
+        <p style="color: #AAAAAA; margin: 0 0 1rem 0; font-size: 0.95rem; line-height: 1.6;">{explanation}</p>
+        {"<div style='margin-top: 1rem;'><p style='color: #888; font-size: 0.85rem; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;'>Recommended Actions:</p><ul style='color: #EAEAEA; margin: 0; padding-left: 1.25rem; font-size: 0.9rem;'>" + steps_html + "</ul></div>" if next_steps else ""}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown(f"""
+        <div style="background: {bg_color}; border-left: 4px solid {border_color}; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+            <h4 style="color: {border_color}; margin: 0 0 0.5rem 0;">{title}</h4>
+            <p style="color: #EAEAEA; margin: 0; font-size: 0.95rem; line-height: 1.6;">{content}</p>
+        </div>
+    """, unsafe_allow_html=True)
+
 def clean_data(df, target, features, date_col=None):
     """Cleans dataframe for specific columns and optional date."""
     cols = [target] + features
@@ -925,16 +1194,23 @@ def main():
             # TAB 2: PERFORMANCE
             # ================================================================
             with tab2:
-                c1, c2, c3, c4 = st.columns(4)
-                
                 r2 = model.rsquared
                 adj_r2 = model.rsquared_adj
                 rmse = np.sqrt(model.mse_resid)
                 f_pval = model.f_pvalue
+                n_obs = int(model.nobs)
                 
-                with c1: render_metric("R-Squared", f"{r2:.4f}", "Fit Quality", "gold")
-                with c2: render_metric("Adj. R-Squared", f"{adj_r2:.4f}", "Robust Fit", "gold")
-                with c3: render_metric("RMSE", f"{rmse:.4f}", "Avg Error", "success")
+                # Executive Summary at the top
+                summary_text, verdict = generate_model_summary(model, r2, adj_r2, rmse, f_pval, n_obs, len(feature_cols), target_col)
+                st.markdown(summary_text)
+                
+                st.markdown("---")
+                
+                # Key Metrics
+                c1, c2, c3, c4 = st.columns(4)
+                with c1: render_metric("R-Squared", f"{r2:.4f}", f"Explains {r2:.1%} of variance", "gold")
+                with c2: render_metric("Adj. R-Squared", f"{adj_r2:.4f}", f"Penalized for {len(feature_cols)} features", "gold")
+                with c3: render_metric("RMSE", f"{rmse:.4f}", f"±{rmse:.2f} avg error", "success")
                 with c4: 
                     sig_style = "success" if f_pval < 0.05 else "danger"
                     sig_text = "Significant" if f_pval < 0.05 else "Not Sig."
@@ -960,17 +1236,26 @@ def main():
                     st.plotly_chart(update_chart_theme(fig_pred), width="stretch")
                 
                 with c_right:
-                    st.markdown("""
-                    <div class="guide-box">
-                        <h4 style="color:#FFC300; margin-top:0;">Interpretation Guide</h4>
-                        <b>R-Squared:</b><br>
-                        • 0.7 - 1.0: Strong relationship<br>
-                        • 0.3 - 0.7: Moderate relationship<br>
-                        • < 0.3: Weak relationship<br><br>
-                        <b>RMSE:</b><br>
-                        Lower is better. Represents the standard deviation of prediction errors.
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # Dynamic interpretation instead of static guide
+                    st.markdown("#### 🎯 What This Means")
+                    
+                    r2_interpretation = interpret_r_squared(r2, adj_r2)
+                    st.markdown(r2_interpretation)
+                    
+                    st.markdown("")
+                    st.markdown(f"**Model Significance:** {interpret_p_value(f_pval)}")
+                    
+                    st.markdown("")
+                    st.markdown(f"**Prediction Accuracy:** On average, predictions are off by ±{rmse:.4f} units of {target_col}")
+                    
+                    # Identify significant vs insignificant features
+                    sig_feats = [f for f in feature_cols if model.pvalues[f] < 0.05]
+                    insig_feats = [f for f in feature_cols if model.pvalues[f] >= 0.05]
+                    
+                    if sig_feats:
+                        st.markdown(f"**✅ Significant predictors:** {', '.join(sig_feats)}")
+                    if insig_feats:
+                        st.markdown(f"**⚠️ Weak predictors:** {', '.join(insig_feats)}")
 
             # ================================================================
             # TAB 3: EQUATION & COEFFICIENTS
@@ -1047,12 +1332,93 @@ def main():
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
+                
+                # BOTTOM LINE SUMMARY
+                st.markdown("---")
+                
+                # Determine key drivers
+                sig_features = [(f, model.params[f], model.pvalues[f]) for f in feature_cols if model.pvalues[f] < 0.05]
+                insig_features = [f for f in feature_cols if model.pvalues[f] >= 0.05]
+                
+                sig_features_sorted = sorted(sig_features, key=lambda x: abs(x[1] * data[x[0]].std()), reverse=True)
+                
+                if sig_features_sorted:
+                    top_driver = sig_features_sorted[0][0]
+                    top_impact = abs(sig_features_sorted[0][1] * data[top_driver].std())
+                    driver_direction = "increases" if sig_features_sorted[0][1] > 0 else "decreases"
+                    
+                    verdict = f"The strongest driver of {target_col} is {top_driver}"
+                    explanation = f"When {top_driver} moves by one standard deviation, {target_col} {driver_direction} by approximately {top_impact:.2f} units. "
+                    
+                    if len(sig_features_sorted) > 1:
+                        other_drivers = [f[0] for f in sig_features_sorted[1:3]]
+                        explanation += f"Other significant factors include: {', '.join(other_drivers)}."
+                    
+                    next_steps = []
+                    if insig_features:
+                        next_steps.append(f"Consider removing weak predictors ({', '.join(insig_features)}) to simplify the model")
+                    next_steps.append(f"Monitor {top_driver} closely as it has the largest impact on {target_col}")
+                    if len(sig_features_sorted) >= 2:
+                        next_steps.append("Use the equation above to forecast future values based on your predictor assumptions")
+                    
+                    render_bottom_line("Bottom Line: Key Drivers", verdict, explanation, next_steps, "success")
+                else:
+                    verdict = "No statistically significant predictors found"
+                    explanation = f"None of the selected features show a reliable relationship with {target_col}. The coefficients cannot be trusted for prediction or interpretation."
+                    next_steps = [
+                        "Try different predictor variables that may have stronger relationships",
+                        "Check if the relationship is non-linear (try polynomial features)",
+                        "Ensure you have enough data points for reliable estimation"
+                    ]
+                    render_bottom_line("Bottom Line: No Clear Drivers", verdict, explanation, next_steps, "danger")
 
             # ================================================================
             # TAB 6: DIAGNOSTICS
             # ================================================================
             with tab6:
+                st.markdown("### 🛠️ Model Diagnostics")
+                st.markdown("Statistical tests to verify your regression assumptions are met.")
+                
                 residuals = model.resid
+                
+                # Run all tests first to generate summary
+                jb_stat, jb_pval = stats.jarque_bera(residuals)
+                dw_stat = durbin_watson(residuals)
+                
+                try:
+                    bp_stat, bp_pval, _, _ = het_breuschpagan(residuals, sm.add_constant(data[feature_cols]))
+                except:
+                    bp_pval = None
+                
+                max_vif = None
+                if len(feature_cols) > 1:
+                    try:
+                        X_vif = data[feature_cols]
+                        vifs = [variance_inflation_factor(X_vif.values, i) for i in range(len(feature_cols))]
+                        max_vif = max(vifs)
+                    except:
+                        pass
+                
+                # Generate interpretation
+                issues, recommendations = interpret_diagnostics(jb_pval, bp_pval, dw_stat, max_vif)
+                
+                # Summary at top
+                passed_tests = sum([
+                    jb_pval > 0.05,
+                    bp_pval > 0.05 if bp_pval else True,
+                    1.5 < dw_stat < 2.5,
+                    max_vif < 5 if max_vif else True
+                ])
+                total_tests = 4
+                
+                if passed_tests == total_tests:
+                    st.success(f"✅ **All {total_tests} diagnostic tests passed!** Your model assumptions are valid.")
+                elif passed_tests >= total_tests - 1:
+                    st.warning(f"⚠️ **{passed_tests}/{total_tests} tests passed.** Minor issues detected — see recommendations below.")
+                else:
+                    st.error(f"❌ **{passed_tests}/{total_tests} tests passed.** Significant issues detected — results may be unreliable.")
+                
+                st.markdown("---")
                 
                 st.markdown("#### 1. Normality of Residuals")
                 c1, c2 = st.columns([2, 1])
@@ -1062,14 +1428,15 @@ def main():
                     fig_hist.update_traces(marker_color='#FFC300')
                     st.plotly_chart(update_chart_theme(fig_hist), width="stretch")
                 with c2:
-                    jb_stat, jb_pval = stats.jarque_bera(residuals)
                     normality_status = "Normal" if jb_pval > 0.05 else "Non-Normal"
                     style = "success" if jb_pval > 0.05 else "danger"
                     render_metric("Jarque-Bera Test", normality_status, f"P-Val: {jb_pval:.4f}", style)
+                    if jb_pval < 0.05:
+                        st.caption("⚠️ Non-normal residuals can affect confidence intervals and p-values.")
 
                 st.markdown("---")
                 
-                st.markdown("#### 2. Homoscedasticity")
+                st.markdown("#### 2. Homoscedasticity (Constant Variance)")
                 c1, c2 = st.columns([2, 1])
                 with c1:
                     fig_res = px.scatter(x=model.fittedvalues, y=residuals,
@@ -1079,21 +1446,30 @@ def main():
                     fig_res.update_traces(marker=dict(color="#06b6d4", size=7))
                     st.plotly_chart(update_chart_theme(fig_res), width="stretch")
                 with c2:
-                    try:
-                        bp_stat, bp_pval, _, _ = het_breuschpagan(residuals, sm.add_constant(data[feature_cols]))
+                    if bp_pval is not None:
                         homo_status = "Homoscedastic" if bp_pval > 0.05 else "Heteroscedastic"
                         style = "success" if bp_pval > 0.05 else "danger"
                         render_metric("Breusch-Pagan", homo_status, f"P-Val: {bp_pval:.4f}", style)
-                    except:
+                        if bp_pval < 0.05:
+                            st.caption("⚠️ Error variance changes with predictions. Consider robust standard errors.")
+                    else:
                         st.info("Breusch-Pagan test unavailable.")
 
                 st.markdown("---")
                 
                 st.markdown("#### 3. Autocorrelation")
-                dw_stat = durbin_watson(residuals)
-                dw_status = "No Autocorr" if 1.5 < dw_stat < 2.5 else "Autocorrelated"
-                style = "success" if 1.5 < dw_stat < 2.5 else "warning"
-                render_metric("Durbin-Watson", f"{dw_stat:.2f}", dw_status, style)
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    dw_status = "No Autocorr" if 1.5 < dw_stat < 2.5 else "Autocorrelated"
+                    style = "success" if 1.5 < dw_stat < 2.5 else "warning"
+                    render_metric("Durbin-Watson", f"{dw_stat:.2f}", dw_status, style)
+                with c2:
+                    if dw_stat < 1.5:
+                        st.caption("⚠️ Positive autocorrelation: errors follow a pattern. Add lagged variables.")
+                    elif dw_stat > 2.5:
+                        st.caption("⚠️ Negative autocorrelation: unusual error pattern.")
+                    else:
+                        st.caption("✅ Errors are independent — good for reliable inference.")
 
                 st.markdown("---")
                 
@@ -1104,14 +1480,61 @@ def main():
                         vif_data = []
                         for i, col in enumerate(feature_cols):
                             vif = variance_inflation_factor(X_vif.values, i)
-                            vif_data.append({'Feature': col, 'VIF': vif})
+                            status = "🟢" if vif < 5 else ("🟡" if vif < 10 else "🔴")
+                            vif_data.append({'Feature': col, 'VIF': vif, 'Status': status})
                         vif_df = pd.DataFrame(vif_data)
                         st.dataframe(vif_df.style.format({'VIF': '{:.2f}'}), width="stretch")
-                        st.caption("VIF > 5 indicates problematic multicollinearity. VIF > 10 is severe.")
+                        
+                        if max_vif and max_vif > 5:
+                            st.caption(f"⚠️ High VIF detected ({max_vif:.1f}). Correlated predictors inflate standard errors.")
+                        else:
+                            st.caption("✅ No multicollinearity issues — predictors are independent.")
                     except:
                         st.info("VIF calculation failed.")
                 else:
                     st.info("VIF requires 2+ features.")
+                
+                # Summary and Recommendations
+                st.markdown("---")
+                st.markdown("### 🎯 Summary & Recommendations")
+                
+                for issue in issues:
+                    st.markdown(issue)
+                
+                if recommendations:
+                    st.markdown("")
+                    st.markdown("**💡 Recommended Actions:**")
+                    for rec in recommendations:
+                        st.markdown(f"- {rec}")
+                
+                # BOTTOM LINE SUMMARY
+                st.markdown("---")
+                
+                if passed_tests == total_tests:
+                    verdict = "All diagnostic tests passed — model is statistically valid"
+                    explanation = "Your regression assumptions (normality, constant variance, no autocorrelation, no multicollinearity) are all satisfied. You can trust the p-values and confidence intervals."
+                    next_steps = [
+                        "Proceed with confidence — your statistical inference is reliable",
+                        "The coefficients and their significance levels are trustworthy",
+                        "Use the model for prediction and interpretation"
+                    ]
+                    verdict_type = "success"
+                elif passed_tests >= 3:
+                    failed = [k for k, v in [("normality", jb_pval > 0.05), 
+                                             ("homoscedasticity", bp_pval > 0.05 if bp_pval else True),
+                                             ("no autocorrelation", 1.5 < dw_stat < 2.5),
+                                             ("no multicollinearity", max_vif < 5 if max_vif else True)] if not v]
+                    verdict = f"Minor diagnostic issues ({', '.join(failed)})"
+                    explanation = "Most assumptions are met, but some violations exist. Results are likely still useful but interpret with some caution."
+                    next_steps = recommendations + ["Consider using robust standard errors for more reliable inference"]
+                    verdict_type = "warning"
+                else:
+                    verdict = "Significant diagnostic problems detected"
+                    explanation = "Multiple regression assumptions are violated. P-values and confidence intervals may be unreliable. Address these issues before drawing conclusions."
+                    next_steps = recommendations + ["Do not rely on this model for critical decisions until issues are resolved"]
+                    verdict_type = "danger"
+                
+                render_bottom_line("Bottom Line: Model Validity", verdict, explanation, next_steps, verdict_type)
 
             # ================================================================
             # TAB 4: PREDICTIONS
@@ -1179,6 +1602,43 @@ def main():
                 with c_bot:
                     st.markdown("**Top Over-Predictions** (Actual << Predicted)")
                     st.dataframe(analysis_df.nsmallest(5, 'Deviation')[disp_cols], width="stretch")
+                
+                # BOTTOM LINE SUMMARY
+                st.markdown("---")
+                
+                mean_dev = analysis_df['Deviation'].mean()
+                std_dev = analysis_df['Deviation'].std()
+                pos_pct = (analysis_df['Deviation'] > 0).mean() * 100
+                max_under = analysis_df['Deviation'].max()
+                max_over = abs(analysis_df['Deviation'].min())
+                
+                # Determine bias pattern
+                if abs(mean_dev) < std_dev * 0.1:
+                    bias_status = "unbiased"
+                    verdict_type = "success"
+                elif mean_dev > 0:
+                    bias_status = "tends to under-predict"
+                    verdict_type = "warning"
+                else:
+                    bias_status = "tends to over-predict"
+                    verdict_type = "warning"
+                
+                verdict = f"Model is {bias_status} with average error of ±{std_dev:.2f}"
+                explanation = f"On average, predictions miss by {std_dev:.2f} units. The largest under-prediction was {max_under:.2f} and largest over-prediction was {max_over:.2f}. About {pos_pct:.0f}% of predictions are too low."
+                
+                next_steps = []
+                if abs(mean_dev) > std_dev * 0.1:
+                    if mean_dev > 0:
+                        next_steps.append(f"Systematic under-prediction: consider if there's an unmeasured factor pushing {target_col} higher")
+                    else:
+                        next_steps.append(f"Systematic over-prediction: consider if there's an unmeasured factor pushing {target_col} lower")
+                
+                # Look at extreme cases
+                top_miss = analysis_df.nlargest(1, 'Deviation').iloc[0]
+                next_steps.append(f"Investigate the largest miss ({top_miss['Deviation']:.2f}) to understand what the model is missing")
+                next_steps.append(f"Use these prediction errors to set realistic confidence bounds (±{std_dev*2:.2f} for 95% of cases)")
+                
+                render_bottom_line("Bottom Line: Prediction Quality", verdict, explanation, next_steps, verdict_type)
 
             # ================================================================
             # TAB 5: MOVES (Delta Analysis)
@@ -1261,6 +1721,38 @@ def main():
                 fig_move_resid.update_traces(marker_line_width=0)
                 fig_move_resid.update_layout(coloraxis_showscale=False)
                 st.plotly_chart(update_chart_theme(fig_move_resid), width="stretch")
+                
+                # BOTTOM LINE SUMMARY
+                st.markdown("---")
+                
+                move_corr_val, _ = stats.pearsonr(delta_df['Actual_Move'], delta_df['Predicted_Move'])
+                dir_accuracy = ((delta_df['Actual_Move'] * delta_df['Predicted_Move']) > 0).mean() * 100
+                avg_move_error = delta_df['Move_Residual'].abs().mean()
+                
+                if move_corr_val >= 0.7:
+                    verdict = f"Model captures {target_col} movements well (correlation: {move_corr_val:.2f})"
+                    verdict_type = "success"
+                elif move_corr_val >= 0.4:
+                    verdict = f"Model partially captures {target_col} movements (correlation: {move_corr_val:.2f})"
+                    verdict_type = "warning"
+                else:
+                    verdict = f"Model struggles to predict {target_col} movements (correlation: {move_corr_val:.2f})"
+                    verdict_type = "danger"
+                
+                explanation = f"The model correctly predicts the direction of change {dir_accuracy:.0f}% of the time. On average, predicted moves differ from actual moves by {avg_move_error:.2f} units."
+                
+                next_steps = []
+                if dir_accuracy >= 60:
+                    next_steps.append(f"Direction accuracy ({dir_accuracy:.0f}%) is good for trend-following strategies")
+                else:
+                    next_steps.append(f"Low direction accuracy ({dir_accuracy:.0f}%) means the model may miss trend changes")
+                
+                if move_corr_val < 0.5:
+                    next_steps.append("Consider adding momentum or lagged features to better capture dynamics")
+                
+                next_steps.append(f"Use move predictions for period-over-period forecasting rather than absolute levels")
+                
+                render_bottom_line("Bottom Line: Move Prediction", verdict, explanation, next_steps, verdict_type)
 
             # ================================================================
             # TAB 1: RESIDUALS (Primary Analysis View)
@@ -1393,14 +1885,94 @@ def main():
                 fig_cumul.update_layout(height=350)
                 st.plotly_chart(update_chart_theme(fig_cumul), width="stretch")
                 
-                # Drift interpretation
+                # Calculate all residual statistics
+                mean_resid = ts_df_sorted['Deviation'].mean()
+                std_resid = ts_df_sorted['Deviation'].std()
+                pos_pct = (ts_df_sorted['Deviation'] > 0).mean() * 100
                 final_cumul = ts_df_sorted['Cumulative_Residual'].iloc[-1]
-                if final_cumul > ts_df_sorted['Deviation'].std() * 2:
-                    st.warning(f"⚠️ **Positive Drift Detected:** Cumulative residual is {final_cumul:.2f}. Model tends to under-predict over time.")
-                elif final_cumul < -ts_df_sorted['Deviation'].std() * 2:
-                    st.warning(f"⚠️ **Negative Drift Detected:** Cumulative residual is {final_cumul:.2f}. Model tends to over-predict over time.")
+                move_corr_val, _ = stats.pearsonr(ts_delta_df['Actual_Move'], ts_delta_df['Predicted_Move'])
+                hit_rate_val = ((ts_delta_df['Actual_Move'] * ts_delta_df['Predicted_Move']) > 0).mean() * 100
+                
+                # Dynamic interpretation
+                insights, actions = interpret_residuals(mean_resid, std_resid, pos_pct, final_cumul)
+                
+                st.markdown("---")
+                st.markdown("### 🎯 Summary & Recommendations")
+                
+                # Insights
+                for insight in insights:
+                    st.markdown(insight)
+                
+                st.markdown("")
+                
+                # Key findings box
+                if hit_rate_val >= 60:
+                    direction_verdict = f"✅ Model correctly predicts direction **{hit_rate_val:.0f}%** of the time — useful for directional trades"
+                elif hit_rate_val >= 50:
+                    direction_verdict = f"⚠️ Model predicts direction **{hit_rate_val:.0f}%** of the time — barely better than random"
                 else:
-                    st.success(f"✅ **No Significant Drift:** Cumulative residual is {final_cumul:.2f}. Model appears unbiased over time.")
+                    direction_verdict = f"❌ Model predicts direction only **{hit_rate_val:.0f}%** of the time — worse than a coin flip"
+                
+                st.markdown(direction_verdict)
+                
+                # Actions
+                if actions:
+                    st.markdown("")
+                    st.markdown("**💡 Recommended Actions:**")
+                    for action in actions:
+                        st.markdown(f"- {action}")
+                
+                # COMPREHENSIVE BOTTOM LINE
+                st.markdown("---")
+                
+                # Overall model health assessment
+                health_score = 0
+                health_issues = []
+                
+                if abs(mean_resid) < std_resid * 0.1:
+                    health_score += 25
+                else:
+                    health_issues.append("systematic bias")
+                
+                if 40 <= pos_pct <= 60:
+                    health_score += 25
+                else:
+                    health_issues.append("imbalanced residuals")
+                
+                if abs(final_cumul) < std_resid * 2:
+                    health_score += 25
+                else:
+                    health_issues.append("drift over time")
+                
+                if hit_rate_val >= 55:
+                    health_score += 25
+                else:
+                    health_issues.append("poor directional accuracy")
+                
+                if health_score >= 75:
+                    overall_verdict = f"Model residuals look healthy (Score: {health_score}/100)"
+                    verdict_type = "success"
+                    main_message = f"The model's predictions are unbiased and consistent over time. Direction accuracy of {hit_rate_val:.0f}% is acceptable for forecasting."
+                elif health_score >= 50:
+                    overall_verdict = f"Model has some issues to address (Score: {health_score}/100)"
+                    verdict_type = "warning"
+                    main_message = f"Issues detected: {', '.join(health_issues)}. The model may still be useful but results should be interpreted with caution."
+                else:
+                    overall_verdict = f"Model residuals indicate problems (Score: {health_score}/100)"
+                    verdict_type = "danger"
+                    main_message = f"Significant issues: {', '.join(health_issues)}. Consider revising your model before relying on predictions."
+                
+                next_steps_final = []
+                if "systematic bias" in health_issues:
+                    next_steps_final.append("Add features to capture the systematic pattern in residuals")
+                if "drift over time" in health_issues:
+                    next_steps_final.append("The relationship may be changing — use rolling regression to adapt")
+                if "poor directional accuracy" in health_issues:
+                    next_steps_final.append("Add momentum/lagged features to improve direction prediction")
+                if health_score >= 75:
+                    next_steps_final.append("Model is ready for deployment — monitor residuals going forward")
+                
+                render_bottom_line("Bottom Line: Residual Health Check", overall_verdict, main_message, next_steps_final, verdict_type)
 
             # ================================================================
             # TAB 7: SIMULATE
@@ -1481,6 +2053,12 @@ def main():
                             
                             train_rmse = np.sqrt(mean_squared_error(y_train, train_preds))
                             test_rmse = np.sqrt(mean_squared_error(test_df[target_col], test_preds))
+                            train_r2 = bt_model.rsquared
+                            
+                            # Calculate test R²
+                            ss_res = np.sum((test_df[target_col] - test_preds) ** 2)
+                            ss_tot = np.sum((test_df[target_col] - test_df[target_col].mean()) ** 2)
+                            test_r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
                             
                             c1, c2 = st.columns([2, 1])
                             
@@ -1496,12 +2074,16 @@ def main():
                             with c2:
                                 render_metric("Train RMSE", f"{train_rmse:.4f}", "In-Sample", "info")
                                 render_metric("Test RMSE", f"{test_rmse:.4f}", "Out-of-Sample", "primary")
-                                
-                                pct_degrade = ((test_rmse - train_rmse) / train_rmse) * 100
-                                if pct_degrade > 20:
-                                    st.warning(f"⚠️ Possible overfitting (+{pct_degrade:.0f}%)")
-                                else:
-                                    st.success(f"✅ Stable model (+{pct_degrade:.0f}%)")
+                            
+                            # Intelligent interpretation
+                            st.markdown("---")
+                            st.markdown("#### 🎯 Backtest Verdict")
+                            
+                            status, explanation, action = interpret_backtest(train_rmse, test_rmse, train_r2, test_r2)
+                            st.markdown(f"**{status}**")
+                            st.markdown(explanation)
+                            st.markdown(f"**💡 Recommendation:** {action}")
+                            
                         except Exception as e:
                             st.error(f"Backtest failed: {e}")
 
@@ -1555,6 +2137,33 @@ def main():
                                     yaxis2=dict(title='RMSE', overlaying='y', side='right')
                                 )
                                 st.plotly_chart(update_chart_theme(fig_wf), width="stretch")
+                                
+                                # BOTTOM LINE for Walk-Forward
+                                avg_r2 = wf_results['R²'].mean()
+                                avg_dir = wf_results['Dir Accuracy'].mean()
+                                r2_stability = wf_results['R²'].std()
+                                
+                                if avg_r2 >= 0.5 and r2_stability < 0.1:
+                                    wf_verdict = f"Model is stable across time periods (Avg R²: {avg_r2:.2f}, Stability: {r2_stability:.3f})"
+                                    wf_type = "success"
+                                    wf_explain = "Performance is consistent across different time windows. The model should perform reliably on future data."
+                                elif avg_r2 >= 0.3:
+                                    wf_verdict = f"Model has moderate but variable performance (Avg R²: {avg_r2:.2f})"
+                                    wf_type = "warning"
+                                    wf_explain = "Performance varies across time periods. Be cautious about relying on predictions during volatile periods."
+                                else:
+                                    wf_verdict = f"Model performs poorly out-of-sample (Avg R²: {avg_r2:.2f})"
+                                    wf_type = "danger"
+                                    wf_explain = "The model fails to generalize to new data. It may be overfit to the training period."
+                                
+                                wf_steps = []
+                                if avg_dir >= 0.55:
+                                    wf_steps.append(f"Direction accuracy ({avg_dir:.0%}) is useful for trend-following strategies")
+                                if r2_stability > 0.1:
+                                    wf_steps.append("High variability across folds — consider regime-specific models")
+                                wf_steps.append("Use the worst-fold performance as a conservative estimate")
+                                
+                                render_bottom_line("Bottom Line: Walk-Forward Validation", wf_verdict, wf_explain, wf_steps, wf_type)
                             else:
                                 st.error("Walk-forward analysis failed.")
 
