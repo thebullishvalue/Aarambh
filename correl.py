@@ -33,7 +33,7 @@ except ImportError:
 
 # --- Page Config ---
 st.set_page_config(
-    page_title="Regression Lab Pro | Quant Correlate",
+    page_title="Aarambh | Regression Lab Pro",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -757,7 +757,7 @@ def main():
     # Premium Header
     st.markdown("""
     <div class="premium-header">
-        <h1>Regression Lab <span style="color:#FFC300;">Pro</span></h1>
+        <h1>Aarambh | Regression Lab <span style="color:#FFC300;">Pro</span></h1>
         <div class="tagline">Advanced Multi-Variable Modeling & Predictive Analytics</div>
     </div>
     """, unsafe_allow_html=True)
@@ -1891,7 +1891,7 @@ def main():
         # Landing page
         st.markdown("""
         <div style="text-align: center; padding: 3rem;">
-            <h2 style="color: #FFC300;">Welcome to Regression Lab Pro</h2>
+            <h2 style="color: #FFC300;">Welcome to Aarambh | Regression Lab Pro</h2>
             <p style="color: #888; font-size: 1.1rem;">
                 Upload your data to begin advanced regression analysis.
             </p>
@@ -1923,7 +1923,7 @@ def main():
     # --- Footer ---
     st.markdown(f"""
     <div class="app-footer">
-        <p>© {datetime.now().year} Regression Lab Pro | Arthagati Analytics Suite. All data is for informational purposes only.</p>
+        <p>© {datetime.now().year} Aarambh | Regression Lab Pro | Arthagati Analytics Suite. All data is for informational purposes only.</p>
     </div>
     """, unsafe_allow_html=True)
 
