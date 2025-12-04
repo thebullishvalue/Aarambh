@@ -620,6 +620,384 @@ def run_regression(data, target, features):
     except Exception as e:
         return None, str(e)
 
+def run_regression_basket(data, target, features):
+    """
+    Runs multiple regression models and returns results for comparison.
+    Returns a dictionary with all model results and recommendations.
+    """
+    results = {}
+    y = data[target].values
+    X = data[features].values
+    n_samples, n_features = X.shape
+    
+    # 1. OLS (Baseline)
+    try:
+        X_ols = sm.add_constant(X)
+        ols_model = sm.OLS(y, X_ols).fit()
+        ols_preds = ols_model.predict(X_ols)
+        ols_rmse = np.sqrt(mean_squared_error(y, ols_preds))
+        ols_r2 = ols_model.rsquared
+        ols_adj_r2 = ols_model.rsquared_adj
+        ols_aic = ols_model.aic
+        ols_bic = ols_model.bic
+        
+        results['OLS'] = {
+            'model': ols_model,
+            'predictions': ols_preds,
+            'r2': ols_r2,
+            'adj_r2': ols_adj_r2,
+            'rmse': ols_rmse,
+            'mae': mean_absolute_error(y, ols_preds),
+            'aic': ols_aic,
+            'bic': ols_bic,
+            'description': 'Ordinary Least Squares - Standard linear regression',
+            'best_for': 'Clean data with no multicollinearity or outliers',
+            'coefficients': dict(zip(['const'] + features, ols_model.params))
+        }
+    except Exception as e:
+        results['OLS'] = {'error': str(e)}
+    
+    if SKLEARN_AVAILABLE:
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # 2. Ridge Regression
+        try:
+            from sklearn.linear_model import RidgeCV
+            ridge_cv = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=5)
+            ridge_cv.fit(X_scaled, y)
+            ridge_preds = ridge_cv.predict(X_scaled)
+            ridge_rmse = np.sqrt(mean_squared_error(y, ridge_preds))
+            ridge_r2 = ridge_cv.score(X_scaled, y)
+            
+            # Calculate AIC/BIC approximation for Ridge
+            n = len(y)
+            k = n_features + 1
+            rss = np.sum((y - ridge_preds) ** 2)
+            ridge_aic = n * np.log(rss / n) + 2 * k
+            ridge_bic = n * np.log(rss / n) + k * np.log(n)
+            
+            results['Ridge'] = {
+                'model': ridge_cv,
+                'scaler': scaler,
+                'predictions': ridge_preds,
+                'r2': ridge_r2,
+                'adj_r2': 1 - (1 - ridge_r2) * (n - 1) / (n - k - 1),
+                'rmse': ridge_rmse,
+                'mae': mean_absolute_error(y, ridge_preds),
+                'aic': ridge_aic,
+                'bic': ridge_bic,
+                'alpha': ridge_cv.alpha_,
+                'description': 'Ridge (L2) - Handles multicollinearity',
+                'best_for': 'High correlation between predictors',
+                'coefficients': dict(zip(features, ridge_cv.coef_))
+            }
+        except Exception as e:
+            results['Ridge'] = {'error': str(e)}
+        
+        # 3. Lasso Regression
+        try:
+            from sklearn.linear_model import LassoCV
+            lasso_cv = LassoCV(alphas=[0.001, 0.01, 0.1, 1.0, 10.0], cv=5, max_iter=10000)
+            lasso_cv.fit(X_scaled, y)
+            lasso_preds = lasso_cv.predict(X_scaled)
+            lasso_rmse = np.sqrt(mean_squared_error(y, lasso_preds))
+            lasso_r2 = lasso_cv.score(X_scaled, y)
+            
+            n = len(y)
+            k = np.sum(lasso_cv.coef_ != 0) + 1  # Only count non-zero coefficients
+            rss = np.sum((y - lasso_preds) ** 2)
+            lasso_aic = n * np.log(rss / n) + 2 * k
+            lasso_bic = n * np.log(rss / n) + k * np.log(n)
+            
+            # Count selected features
+            selected_features = [f for f, c in zip(features, lasso_cv.coef_) if abs(c) > 1e-6]
+            
+            results['Lasso'] = {
+                'model': lasso_cv,
+                'scaler': scaler,
+                'predictions': lasso_preds,
+                'r2': lasso_r2,
+                'adj_r2': 1 - (1 - lasso_r2) * (n - 1) / (n - k - 1) if k > 0 else lasso_r2,
+                'rmse': lasso_rmse,
+                'mae': mean_absolute_error(y, lasso_preds),
+                'aic': lasso_aic,
+                'bic': lasso_bic,
+                'alpha': lasso_cv.alpha_,
+                'selected_features': selected_features,
+                'n_selected': len(selected_features),
+                'description': 'Lasso (L1) - Feature selection via sparsity',
+                'best_for': 'Too many predictors, need automatic selection',
+                'coefficients': dict(zip(features, lasso_cv.coef_))
+            }
+        except Exception as e:
+            results['Lasso'] = {'error': str(e)}
+        
+        # 4. Elastic Net
+        try:
+            from sklearn.linear_model import ElasticNetCV
+            enet_cv = ElasticNetCV(l1_ratio=[0.1, 0.5, 0.7, 0.9, 0.95], alphas=[0.001, 0.01, 0.1, 1.0], cv=5, max_iter=10000)
+            enet_cv.fit(X_scaled, y)
+            enet_preds = enet_cv.predict(X_scaled)
+            enet_rmse = np.sqrt(mean_squared_error(y, enet_preds))
+            enet_r2 = enet_cv.score(X_scaled, y)
+            
+            n = len(y)
+            k = np.sum(enet_cv.coef_ != 0) + 1
+            rss = np.sum((y - enet_preds) ** 2)
+            enet_aic = n * np.log(rss / n) + 2 * k
+            enet_bic = n * np.log(rss / n) + k * np.log(n)
+            
+            results['Elastic Net'] = {
+                'model': enet_cv,
+                'scaler': scaler,
+                'predictions': enet_preds,
+                'r2': enet_r2,
+                'adj_r2': 1 - (1 - enet_r2) * (n - 1) / (n - k - 1) if k > 0 else enet_r2,
+                'rmse': enet_rmse,
+                'mae': mean_absolute_error(y, enet_preds),
+                'aic': enet_aic,
+                'bic': enet_bic,
+                'alpha': enet_cv.alpha_,
+                'l1_ratio': enet_cv.l1_ratio_,
+                'description': 'Elastic Net - Combines Ridge + Lasso benefits',
+                'best_for': 'Correlated predictors + need feature selection',
+                'coefficients': dict(zip(features, enet_cv.coef_))
+            }
+        except Exception as e:
+            results['Elastic Net'] = {'error': str(e)}
+        
+        # 5. Huber Robust Regression
+        try:
+            huber = HuberRegressor(epsilon=1.35, max_iter=1000)
+            huber.fit(X_scaled, y)
+            huber_preds = huber.predict(X_scaled)
+            huber_rmse = np.sqrt(mean_squared_error(y, huber_preds))
+            huber_r2 = huber.score(X_scaled, y)
+            
+            n = len(y)
+            k = n_features + 1
+            rss = np.sum((y - huber_preds) ** 2)
+            huber_aic = n * np.log(rss / n) + 2 * k
+            huber_bic = n * np.log(rss / n) + k * np.log(n)
+            
+            results['Huber'] = {
+                'model': huber,
+                'scaler': scaler,
+                'predictions': huber_preds,
+                'r2': huber_r2,
+                'adj_r2': 1 - (1 - huber_r2) * (n - 1) / (n - k - 1),
+                'rmse': huber_rmse,
+                'mae': mean_absolute_error(y, huber_preds),
+                'aic': huber_aic,
+                'bic': huber_bic,
+                'description': 'Huber - Robust to outliers',
+                'best_for': 'Data with outliers or heavy tails',
+                'coefficients': dict(zip(features, huber.coef_))
+            }
+        except Exception as e:
+            results['Huber'] = {'error': str(e)}
+        
+        # 6. RANSAC (outlier-resistant)
+        try:
+            from sklearn.linear_model import RANSACRegressor, LinearRegression
+            ransac = RANSACRegressor(estimator=LinearRegression(), random_state=42, max_trials=100)
+            ransac.fit(X, y)  # RANSAC doesn't need scaling
+            ransac_preds = ransac.predict(X)
+            ransac_rmse = np.sqrt(mean_squared_error(y, ransac_preds))
+            ransac_r2 = ransac.score(X, y)
+            
+            n = len(y)
+            k = n_features + 1
+            rss = np.sum((y - ransac_preds) ** 2)
+            ransac_aic = n * np.log(rss / n) + 2 * k
+            ransac_bic = n * np.log(rss / n) + k * np.log(n)
+            
+            # Count inliers
+            n_inliers = np.sum(ransac.inlier_mask_)
+            
+            results['RANSAC'] = {
+                'model': ransac,
+                'predictions': ransac_preds,
+                'r2': ransac_r2,
+                'adj_r2': 1 - (1 - ransac_r2) * (n - 1) / (n - k - 1),
+                'rmse': ransac_rmse,
+                'mae': mean_absolute_error(y, ransac_preds),
+                'aic': ransac_aic,
+                'bic': ransac_bic,
+                'n_inliers': n_inliers,
+                'n_outliers': n - n_inliers,
+                'outlier_pct': (n - n_inliers) / n * 100,
+                'description': 'RANSAC - Automatic outlier removal',
+                'best_for': 'Data with significant outliers to ignore',
+                'coefficients': dict(zip(features, ransac.estimator_.coef_))
+            }
+        except Exception as e:
+            results['RANSAC'] = {'error': str(e)}
+    
+    # 7. Quantile Regression (median)
+    try:
+        X_quant = sm.add_constant(X)
+        quant_model = QuantReg(y, X_quant).fit(q=0.5)
+        quant_preds = quant_model.predict(X_quant)
+        quant_rmse = np.sqrt(mean_squared_error(y, quant_preds))
+        
+        # Pseudo R2 for quantile regression
+        quant_r2 = 1 - quant_model.prsquared if hasattr(quant_model, 'prsquared') else 0
+        
+        n = len(y)
+        k = n_features + 1
+        rss = np.sum((y - quant_preds) ** 2)
+        quant_aic = n * np.log(rss / n) + 2 * k
+        quant_bic = n * np.log(rss / n) + k * np.log(n)
+        
+        results['Quantile (Median)'] = {
+            'model': quant_model,
+            'predictions': quant_preds,
+            'r2': quant_r2,
+            'adj_r2': quant_r2,
+            'rmse': quant_rmse,
+            'mae': mean_absolute_error(y, quant_preds),
+            'aic': quant_aic,
+            'bic': quant_bic,
+            'quantile': 0.5,
+            'description': 'Quantile (Median) - Predicts median instead of mean',
+            'best_for': 'Skewed distributions or when median is preferred',
+            'coefficients': dict(zip(['const'] + features, quant_model.params))
+        }
+    except Exception as e:
+        results['Quantile (Median)'] = {'error': str(e)}
+    
+    return results
+
+def select_best_model(basket_results, data, target, features):
+    """
+    Analyzes data characteristics and recommends the best model.
+    Returns recommendation with reasoning.
+    """
+    y = data[target].values
+    X = data[features].values
+    n_samples, n_features = X.shape
+    
+    # Data diagnostics
+    diagnostics = {}
+    
+    # 1. Check for multicollinearity
+    if n_features > 1:
+        try:
+            corr_matrix = np.corrcoef(X.T)
+            max_corr = np.max(np.abs(corr_matrix[np.triu_indices(n_features, k=1)]))
+            diagnostics['multicollinearity'] = max_corr > 0.7
+            diagnostics['max_correlation'] = max_corr
+        except:
+            diagnostics['multicollinearity'] = False
+            diagnostics['max_correlation'] = 0
+    else:
+        diagnostics['multicollinearity'] = False
+        diagnostics['max_correlation'] = 0
+    
+    # 2. Check for outliers (using IQR method)
+    q1, q3 = np.percentile(y, [25, 75])
+    iqr = q3 - q1
+    outlier_mask = (y < q1 - 1.5 * iqr) | (y > q3 + 1.5 * iqr)
+    diagnostics['has_outliers'] = np.sum(outlier_mask) > n_samples * 0.05
+    diagnostics['outlier_pct'] = np.sum(outlier_mask) / n_samples * 100
+    
+    # 3. Check for skewness
+    diagnostics['skewness'] = stats.skew(y)
+    diagnostics['is_skewed'] = abs(diagnostics['skewness']) > 1
+    
+    # 4. Check sample size vs features
+    diagnostics['low_sample'] = n_samples < n_features * 10
+    diagnostics['samples_per_feature'] = n_samples / n_features
+    
+    # 5. Check for heteroscedasticity (simple test)
+    if 'OLS' in basket_results and 'error' not in basket_results['OLS']:
+        residuals = y - basket_results['OLS']['predictions']
+        try:
+            _, bp_pval, _, _ = het_breuschpagan(residuals, sm.add_constant(X))
+            diagnostics['heteroscedastic'] = bp_pval < 0.05
+        except:
+            diagnostics['heteroscedastic'] = False
+    else:
+        diagnostics['heteroscedastic'] = False
+    
+    # Scoring system for each model
+    scores = {}
+    reasoning = {}
+    
+    for model_name, result in basket_results.items():
+        if 'error' in result:
+            continue
+        
+        score = 0
+        reasons = []
+        
+        # Base score from R²
+        r2 = result.get('r2', 0)
+        score += r2 * 30  # Max 30 points for R²
+        reasons.append(f"R² = {r2:.3f}")
+        
+        # Bonus/penalty based on data characteristics
+        
+        # Multicollinearity handling
+        if diagnostics['multicollinearity']:
+            if model_name in ['Ridge', 'Elastic Net']:
+                score += 15
+                reasons.append("+15: Handles multicollinearity well")
+            elif model_name == 'OLS':
+                score -= 10
+                reasons.append("-10: Sensitive to multicollinearity")
+        
+        # Outlier handling
+        if diagnostics['has_outliers']:
+            if model_name in ['Huber', 'RANSAC', 'Quantile (Median)']:
+                score += 15
+                reasons.append("+15: Robust to outliers")
+            elif model_name == 'OLS':
+                score -= 10
+                reasons.append("-10: Sensitive to outliers")
+        
+        # Feature selection for high dimensionality
+        if diagnostics['low_sample']:
+            if model_name in ['Lasso', 'Elastic Net']:
+                score += 10
+                reasons.append("+10: Good for high-dimensional data")
+            elif model_name == 'OLS':
+                score -= 5
+                reasons.append("-5: May overfit with many features")
+        
+        # Skewness handling
+        if diagnostics['is_skewed']:
+            if model_name == 'Quantile (Median)':
+                score += 10
+                reasons.append("+10: Better for skewed distributions")
+        
+        # BIC bonus (parsimony)
+        bic = result.get('bic', float('inf'))
+        # Will normalize later
+        
+        # Interpretability bonus
+        if model_name == 'OLS':
+            score += 5
+            reasons.append("+5: Most interpretable")
+        
+        scores[model_name] = score
+        reasoning[model_name] = reasons
+    
+    # Normalize and select best
+    if scores:
+        best_model = max(scores, key=scores.get)
+    else:
+        best_model = 'OLS'
+    
+    return {
+        'best_model': best_model,
+        'scores': scores,
+        'reasoning': reasoning,
+        'diagnostics': diagnostics
+    }
+
 def render_metric(label, value, sub=None, style="gold", tooltip=""):
     """Renders a metric card."""
     tooltip_attr = f'title="{tooltip}"' if tooltip else ''
@@ -1163,25 +1541,22 @@ def main():
                 st.error(f"Model Error: {err}")
                 return
 
-            # --- TABS (Organized by workflow) ---
-            # Group 1: Primary Analysis (What you came here for)
-            # Group 2: Model Understanding (How the model works)
-            # Group 3: Validation & Testing (Is the model reliable?)
-            # Group 4: Advanced Tools (Power user features)
+            # --- TABS (Streamlined workflow) ---
+            # Primary Analysis → Model Understanding → Validation → Model Selection
             
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                 "📉 Residuals",           # PRIMARY: Time series residual analysis
                 "📊 Performance",          # Model fit metrics
                 "📐 Equation",             # Coefficients & interpretation
                 "🔍 Predictions",          # Actual vs predicted deep dive
                 "🌊 Moves",                # Delta/change analysis
                 "🛠️ Diagnostics",          # Statistical tests
-                "🔮 Simulate",             # What-if & backtesting
-                "⚙️ Models",               # Advanced regression types
-                "📈 Rolling",              # Time-varying analysis
-                "🧪 Features",             # Feature engineering
-                "🏆 Compare"               # Model comparison
+                "🎯 Model Selection"       # NEW: Regression basket with recommendations
             ])
+            
+            # Run regression basket for all models
+            basket_results = run_regression_basket(data, target_col, feature_cols)
+            model_selection = select_best_model(basket_results, data, target_col, feature_cols)
 
             # ================================================================
             # TAB 2: PERFORMANCE
@@ -2270,755 +2645,218 @@ def main():
                 
                 render_bottom_line("Bottom Line: Residual Health Check", overall_verdict, main_message, next_steps_final, verdict_type)
 
+
             # ================================================================
-            # TAB 7: SIMULATE
+            # TAB 7: MODEL SELECTION (Regression Basket with Recommendations)
             # ================================================================
             with tab7:
-                st.markdown("### 🔮 Simulation & Backtesting")
+                st.markdown("### 🎯 Model Selection")
+                st.markdown("""
+                <div class="guide-box">
+                    <h4 style="color:#FFC300; margin-top:0;">Intelligent Regression Model Selection</h4>
+                    We automatically run <b>7 different regression models</b> on your data and analyze which one is best suited 
+                    based on your data characteristics (outliers, multicollinearity, sample size, skewness).
+                </div>
+                """, unsafe_allow_html=True)
                 
-                subtab_sim, subtab_bt, subtab_wf, subtab_mc = st.tabs([
-                    "🎛️ What-If", 
-                    "🔙 Backtest",
-                    "🚶 Walk-Forward",
-                    "🎲 Monte Carlo"
-                ])
+                # Data Diagnostics Summary
+                st.markdown("---")
+                st.markdown("#### 📋 Data Diagnostics")
                 
-                # --- What-If Simulator ---
-                with subtab_sim:
-                    st.markdown("#### Sensitivity Analysis")
-                    
-                    c_sim_inputs, c_sim_res = st.columns([1, 1])
-                    user_inputs = {}
-                    
-                    with c_sim_inputs:
-                        st.markdown("**Adjust Feature Values:**")
-                        for feat in feature_cols:
-                            min_val = float(data[feat].min())
-                            max_val = float(data[feat].max())
-                            mean_val = float(data[feat].mean())
-                            step_val = (max_val - min_val) / 100
-                            
-                            user_inputs[feat] = st.slider(
-                                f"{feat}", 
-                                min_value=min_val, 
-                                max_value=max_val, 
-                                value=mean_val,
-                                step=step_val,
-                                format="%.2f",
-                                key=f"sim_{feat}"
-                            )
-                    
-                    sim_pred = model.params['const']
-                    for feat, val in user_inputs.items():
-                        sim_pred += model.params[feat] * val
-                        
-                    with c_sim_res:
-                        st.markdown("**Simulation Result:**")
-                        avg_target = data[target_col].mean()
-                        diff_from_avg = sim_pred - avg_target
-                        pct_diff = (diff_from_avg / avg_target) * 100 if avg_target != 0 else 0
-                        
-                        render_metric(f"Predicted {target_col}", f"{sim_pred:.2f}", f"Vs Average: {pct_diff:+.2f}%", "primary")
-
-                # --- Simple Backtest ---
-                with subtab_bt:
-                    st.markdown("#### Chronological Train/Test Split")
-                    
-                    split_pct = st.slider("Training Data %", 50, 90, 80, 5, key="bt_split") / 100.0
-                    
-                    if date_col_option != "None" and date_col_option in data.columns:
-                        bt_data = data.sort_values(by=date_col_option).reset_index(drop=True)
-                    else:
-                        bt_data = data.reset_index(drop=True)
-
-                    split_idx = int(len(bt_data) * split_pct)
-                    train_df = bt_data.iloc[:split_idx]
-                    test_df = bt_data.iloc[split_idx:]
-                    
-                    if len(test_df) < 2:
-                        st.error("Not enough test data.")
-                    else:
-                        try:
-                            y_train = train_df[target_col]
-                            X_train = sm.add_constant(train_df[feature_cols])
-                            bt_model = sm.OLS(y_train, X_train).fit()
-                            
-                            X_test = sm.add_constant(test_df[feature_cols])
-                            test_preds = bt_model.predict(X_test)
-                            train_preds = bt_model.predict(X_train)
-                            
-                            train_rmse = np.sqrt(mean_squared_error(y_train, train_preds))
-                            test_rmse = np.sqrt(mean_squared_error(test_df[target_col], test_preds))
-                            train_r2 = bt_model.rsquared
-                            
-                            # Calculate test R²
-                            ss_res = np.sum((test_df[target_col] - test_preds) ** 2)
-                            ss_tot = np.sum((test_df[target_col] - test_df[target_col].mean()) ** 2)
-                            test_r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-                            
-                            c1, c2 = st.columns([2, 1])
-                            
-                            with c1:
-                                fig_bt = go.Figure()
-                                fig_bt.add_trace(go.Scatter(y=bt_data[target_col], mode='lines', 
-                                                           name='Actual', line=dict(color='#444')))
-                                fig_bt.add_trace(go.Scatter(x=test_df.index, y=test_preds, mode='lines',
-                                                           name='Test Prediction', line=dict(color='#00E396')))
-                                fig_bt.add_vline(x=split_idx, line_dash="dash", line_color="#FFC300")
-                                st.plotly_chart(update_chart_theme(fig_bt), width="stretch")
-                                
-                            with c2:
-                                render_metric("Train RMSE", f"{train_rmse:.4f}", "In-Sample", "info")
-                                render_metric("Test RMSE", f"{test_rmse:.4f}", "Out-of-Sample", "primary")
-                            
-                            # Intelligent interpretation
-                            st.markdown("---")
-                            st.markdown("#### 🎯 Backtest Verdict")
-                            
-                            status, explanation, action = interpret_backtest(train_rmse, test_rmse, train_r2, test_r2)
-                            st.markdown(f"**{status}**")
-                            st.markdown(explanation)
-                            st.markdown(f"**💡 Recommendation:** {action}")
-                            
-                        except Exception as e:
-                            st.error(f"Backtest failed: {e}")
-
-                # --- Walk-Forward (NEW) ---
-                with subtab_wf:
-                    st.markdown("#### 🚶 Walk-Forward Optimization")
-                    st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
-                    st.markdown("""
-                    <div class="guide-box">
-                        Rolling retrain: The model is retrained on expanding windows and tested on future data.
-                        This simulates real-world trading conditions where you only have historical data.
+                diag = model_selection['diagnostics']
+                
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    mc_style = "danger" if diag['multicollinearity'] else "success"
+                    mc_text = f"High ({diag['max_correlation']:.2f})" if diag['multicollinearity'] else f"OK ({diag['max_correlation']:.2f})"
+                    render_metric("Multicollinearity", mc_text, "Max feature correlation", mc_style)
+                with c2:
+                    out_style = "warning" if diag['has_outliers'] else "success"
+                    out_text = f"Yes ({diag['outlier_pct']:.1f}%)" if diag['has_outliers'] else "No"
+                    render_metric("Outliers", out_text, "IQR method", out_style)
+                with c3:
+                    skew_style = "warning" if diag['is_skewed'] else "success"
+                    skew_text = f"Yes ({diag['skewness']:.2f})" if diag['is_skewed'] else f"No ({diag['skewness']:.2f})"
+                    render_metric("Skewness", skew_text, "Distribution shape", skew_style)
+                with c4:
+                    sample_style = "warning" if diag['low_sample'] else "success"
+                    sample_text = f"Low ({diag['samples_per_feature']:.0f}:1)" if diag['low_sample'] else f"OK ({diag['samples_per_feature']:.0f}:1)"
+                    render_metric("Sample/Features", sample_text, "Samples per predictor", sample_style)
+                
+                # Recommendation Box
+                st.markdown("---")
+                best_model = model_selection['best_model']
+                best_score = model_selection['scores'].get(best_model, 0)
+                
+                st.markdown(f"""
+                <div style="background: rgba(255, 195, 0, 0.1); border: 2px solid #FFC300; border-radius: 12px; padding: 1.5rem; margin: 1rem 0;">
+                    <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                        <span style="font-size: 2rem; margin-right: 1rem;">🏆</span>
+                        <div>
+                            <h3 style="color: #FFC300; margin: 0;">Recommended Model: {best_model}</h3>
+                            <p style="color: #888; margin: 0.25rem 0 0 0;">Score: {best_score:.1f} points</p>
+                        </div>
                     </div>
-                    """, unsafe_allow_html=True)
-                    
-                    n_folds = st.slider("Number of Folds", 3, 10, 5, key="wf_folds")
-                    
-                    if st.button("Run Walk-Forward Analysis", key="wf_run"):
-                        with st.spinner("Running walk-forward analysis..."):
-                            wf_results = walk_forward_backtest(data, target_col, feature_cols, 
-                                                               n_splits=n_folds, date_col=date_col_option)
-                            
-                            if len(wf_results) > 0:
-                                st.dataframe(wf_results.style.format({
-                                    'R²': '{:.4f}',
-                                    'RMSE': '{:.4f}',
-                                    'MAE': '{:.4f}',
-                                    'Dir Accuracy': '{:.2%}'
-                                }), width="stretch")
-                                
-                                # Summary metrics
-                                c1, c2, c3, c4 = st.columns(4)
-                                with c1:
-                                    render_metric("Avg R²", f"{wf_results['R²'].mean():.4f}", "Across Folds", "gold")
-                                with c2:
-                                    render_metric("Avg RMSE", f"{wf_results['RMSE'].mean():.4f}", "Test Error", "info")
-                                with c3:
-                                    render_metric("Avg Dir Acc", f"{wf_results['Dir Accuracy'].mean():.2%}", "Hit Rate", "success")
-                                with c4:
-                                    stability = wf_results['R²'].std()
-                                    render_metric("R² Stability", f"{stability:.4f}", "Std Dev", "purple")
-                                
-                                # Visualization
-                                fig_wf = go.Figure()
-                                fig_wf.add_trace(go.Bar(x=wf_results['Fold'], y=wf_results['R²'], name='R²',
-                                                       marker_color='#FFC300'))
-                                fig_wf.add_trace(go.Scatter(x=wf_results['Fold'], y=wf_results['RMSE'], 
-                                                           name='RMSE', yaxis='y2', line=dict(color='#ef4444')))
-                                fig_wf.update_layout(
-                                    title="Walk-Forward Performance by Fold",
-                                    yaxis=dict(title='R²'),
-                                    yaxis2=dict(title='RMSE', overlaying='y', side='right')
-                                )
-                                st.plotly_chart(update_chart_theme(fig_wf), width="stretch")
-                                
-                                # BOTTOM LINE for Walk-Forward
-                                avg_r2 = wf_results['R²'].mean()
-                                avg_dir = wf_results['Dir Accuracy'].mean()
-                                r2_stability = wf_results['R²'].std()
-                                
-                                if avg_r2 >= 0.5 and r2_stability < 0.1:
-                                    wf_verdict = f"Model is stable across time periods (Avg R²: {avg_r2:.2f}, Stability: {r2_stability:.3f})"
-                                    wf_type = "success"
-                                    wf_explain = "Performance is consistent across different time windows. The model should perform reliably on future data."
-                                elif avg_r2 >= 0.3:
-                                    wf_verdict = f"Model has moderate but variable performance (Avg R²: {avg_r2:.2f})"
-                                    wf_type = "warning"
-                                    wf_explain = "Performance varies across time periods. Be cautious about relying on predictions during volatile periods."
-                                else:
-                                    wf_verdict = f"Model performs poorly out-of-sample (Avg R²: {avg_r2:.2f})"
-                                    wf_type = "danger"
-                                    wf_explain = "The model fails to generalize to new data. It may be overfit to the training period."
-                                
-                                wf_steps = []
-                                if avg_dir >= 0.55:
-                                    wf_steps.append(f"Direction accuracy ({avg_dir:.0%}) is useful for trend-following strategies")
-                                if r2_stability > 0.1:
-                                    wf_steps.append("High variability across folds — consider regime-specific models")
-                                wf_steps.append("Use the worst-fold performance as a conservative estimate")
-                                
-                                render_bottom_line("Bottom Line: Walk-Forward Validation", wf_verdict, wf_explain, wf_steps, wf_type)
-                            else:
-                                st.error("Walk-forward analysis failed.")
-
-                # --- Monte Carlo (NEW) ---
-                with subtab_mc:
-                    st.markdown("#### 🎲 Monte Carlo Confidence Intervals")
-                    st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
-                    st.markdown("""
-                    <div class="guide-box">
-                        Bootstrap simulation: Resamples the data many times to estimate 
-                        prediction confidence intervals. Shows how uncertain our predictions really are.
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    n_sims = st.slider("Number of Simulations", 100, 2000, 500, 100, key="mc_sims")
-                    
-                    if st.button("Run Monte Carlo Simulation", key="mc_run"):
-                        with st.spinner(f"Running {n_sims} bootstrap simulations..."):
-                            mc_data = data[[target_col] + feature_cols].copy()
-                            mc_results = monte_carlo_simulation(model, mc_data, feature_cols, n_simulations=n_sims)
-                            
-                            if mc_results:
-                                actual_vals = data[target_col].values
-                                
-                                fig_mc = go.Figure()
-                                
-                                # Confidence bands
-                                x_range = list(range(len(actual_vals)))
-                                fig_mc.add_trace(go.Scatter(
-                                    x=x_range + x_range[::-1],
-                                    y=list(mc_results['ci_upper']) + list(mc_results['ci_lower'][::-1]),
-                                    fill='toself',
-                                    fillcolor='rgba(255, 195, 0, 0.2)',
-                                    line=dict(color='rgba(255,255,255,0)'),
-                                    name='95% CI'
-                                ))
-                                
-                                fig_mc.add_trace(go.Scatter(
-                                    x=x_range + x_range[::-1],
-                                    y=list(mc_results['ci_95']) + list(mc_results['ci_5'][::-1]),
-                                    fill='toself',
-                                    fillcolor='rgba(255, 195, 0, 0.3)',
-                                    line=dict(color='rgba(255,255,255,0)'),
-                                    name='90% CI'
-                                ))
-                                
-                                # Mean prediction
-                                fig_mc.add_trace(go.Scatter(x=x_range, y=mc_results['mean'], 
-                                                           mode='lines', name='Mean Prediction',
-                                                           line=dict(color='#FFC300', width=2)))
-                                
-                                # Actual
-                                fig_mc.add_trace(go.Scatter(x=x_range, y=actual_vals, 
-                                                           mode='markers', name='Actual',
-                                                           marker=dict(color='#06b6d4', size=5)))
-                                
-                                fig_mc.update_layout(title="Monte Carlo Prediction Confidence Bands")
-                                st.plotly_chart(update_chart_theme(fig_mc), width="stretch")
-                                
-                                # Coverage statistics
-                                in_95_ci = ((actual_vals >= mc_results['ci_lower']) & 
-                                           (actual_vals <= mc_results['ci_upper'])).mean()
-                                in_90_ci = ((actual_vals >= mc_results['ci_5']) & 
-                                           (actual_vals <= mc_results['ci_95'])).mean()
-                                
-                                c1, c2, c3 = st.columns(3)
-                                with c1:
-                                    render_metric("95% CI Coverage", f"{in_95_ci:.1%}", "Actual in Band", "gold")
-                                with c2:
-                                    render_metric("90% CI Coverage", f"{in_90_ci:.1%}", "Actual in Band", "info")
-                                with c3:
-                                    avg_width = (mc_results['ci_upper'] - mc_results['ci_lower']).mean()
-                                    render_metric("Avg CI Width", f"{avg_width:.4f}", "Uncertainty", "purple")
-                            else:
-                                st.error("Monte Carlo simulation failed.")
-
-            # ================================================================
-            # TAB 8: MODELS (Advanced Regression Types)
-            # ================================================================
-            with tab8:
-                st.markdown("### ⚙️ Advanced Models")
+                    <p style="color: #EAEAEA; margin: 0; font-size: 0.95rem;">
+                        {basket_results[best_model]['description'] if best_model in basket_results and 'error' not in basket_results[best_model] else 'N/A'}
+                    </p>
+                    <p style="color: #888; margin: 0.5rem 0 0 0; font-size: 0.85rem;">
+                        <b>Best for:</b> {basket_results[best_model]['best_for'] if best_model in basket_results and 'error' not in basket_results[best_model] else 'N/A'}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                if not SKLEARN_AVAILABLE:
-                    st.error("scikit-learn is required for advanced regression types.")
-                else:
-                    reg_type = st.selectbox("Select Regression Type", [
-                        "Ridge (L2 Regularization)",
-                        "Lasso (L1 Regularization)",
-                        "Elastic Net (L1 + L2)",
-                        "Huber (Robust to Outliers)",
-                        "RANSAC (Outlier Removal)",
-                        "Quantile Regression"
-                    ])
+                # Why this model?
+                if best_model in model_selection['reasoning']:
+                    st.markdown("**Why this model?**")
+                    for reason in model_selection['reasoning'][best_model]:
+                        st.markdown(f"- {reason}")
+                
+                st.markdown("---")
+                st.markdown("#### 📊 Model Comparison")
+                
+                # Build comparison dataframe
+                comparison_data = []
+                for model_name, result in basket_results.items():
+                    if 'error' not in result:
+                        comparison_data.append({
+                            'Model': model_name,
+                            'R²': result['r2'],
+                            'Adj R²': result['adj_r2'],
+                            'RMSE': result['rmse'],
+                            'MAE': result['mae'],
+                            'AIC': result['aic'],
+                            'BIC': result['bic'],
+                            'Score': model_selection['scores'].get(model_name, 0)
+                        })
+                
+                if comparison_data:
+                    comp_df = pd.DataFrame(comparison_data)
+                    comp_df = comp_df.sort_values('Score', ascending=False)
                     
-                    X = data[feature_cols].values
-                    y = data[target_col].values
+                    # Highlight best model
+                    def highlight_best(row):
+                        if row['Model'] == best_model:
+                            return ['background-color: rgba(255, 195, 0, 0.2)'] * len(row)
+                        return [''] * len(row)
                     
-                    col_params, col_results = st.columns([1, 2])
+                    st.dataframe(
+                        comp_df.style.apply(highlight_best, axis=1).format({
+                            'R²': '{:.4f}',
+                            'Adj R²': '{:.4f}',
+                            'RMSE': '{:.4f}',
+                            'MAE': '{:.4f}',
+                            'AIC': '{:.1f}',
+                            'BIC': '{:.1f}',
+                            'Score': '{:.1f}'
+                        }),
+                        width="stretch"
+                    )
                     
-                    with col_params:
-                        st.markdown("#### Parameters")
+                    # Visual comparison
+                    st.markdown("---")
+                    st.markdown("#### 📈 Visual Comparison")
+                    
+                    c1, c2 = st.columns(2)
+                    
+                    with c1:
+                        fig_r2 = px.bar(
+                            comp_df.sort_values('R²', ascending=True),
+                            x='R²',
+                            y='Model',
+                            orientation='h',
+                            title='R² by Model (Higher is Better)',
+                            color='R²',
+                            color_continuous_scale=['#ef4444', '#f59e0b', '#10b981']
+                        )
+                        fig_r2.update_layout(showlegend=False, coloraxis_showscale=False, height=350)
+                        st.plotly_chart(update_chart_theme(fig_r2), width="stretch")
+                    
+                    with c2:
+                        fig_rmse = px.bar(
+                            comp_df.sort_values('RMSE', ascending=False),
+                            x='RMSE',
+                            y='Model',
+                            orientation='h',
+                            title='RMSE by Model (Lower is Better)',
+                            color='RMSE',
+                            color_continuous_scale=['#10b981', '#f59e0b', '#ef4444']
+                        )
+                        fig_rmse.update_layout(showlegend=False, coloraxis_showscale=False, height=350)
+                        st.plotly_chart(update_chart_theme(fig_rmse), width="stretch")
+                
+                # Model Details Expanders
+                st.markdown("---")
+                st.markdown("#### 🔍 Model Details")
+                
+                for model_name, result in basket_results.items():
+                    if 'error' not in result:
+                        is_best = model_name == best_model
+                        icon = "🏆 " if is_best else ""
                         
-                        if "Ridge" in reg_type:
-                            alpha = st.slider("Alpha (Regularization)", 0.01, 10.0, 1.0, 0.1)
-                            adv_model, scaler = run_ridge_regression(X, y, alpha)
+                        with st.expander(f"{icon}{model_name} — R²: {result['r2']:.4f}, RMSE: {result['rmse']:.4f}"):
+                            st.markdown(f"**Description:** {result['description']}")
+                            st.markdown(f"**Best For:** {result['best_for']}")
                             
-                        elif "Lasso" in reg_type:
-                            alpha = st.slider("Alpha (Regularization)", 0.01, 10.0, 1.0, 0.1)
-                            adv_model, scaler = run_lasso_regression(X, y, alpha)
-                            
-                        elif "Elastic" in reg_type:
-                            alpha = st.slider("Alpha", 0.01, 10.0, 1.0, 0.1)
-                            l1_ratio = st.slider("L1 Ratio", 0.0, 1.0, 0.5, 0.1)
-                            adv_model, scaler = run_elastic_net(X, y, alpha, l1_ratio)
-                            
-                        elif "Huber" in reg_type:
-                            epsilon = st.slider("Epsilon", 1.0, 2.0, 1.35, 0.05)
-                            adv_model, scaler = run_huber_regression(X, y, epsilon)
-                            
-                        elif "RANSAC" in reg_type:
-                            adv_model, scaler = run_ransac_regression(X, y)
-                            
-                        elif "Quantile" in reg_type:
-                            quantile = st.slider("Quantile", 0.1, 0.9, 0.5, 0.1)
-                            adv_model = run_quantile_regression(data, target_col, feature_cols, quantile)
-                            scaler = None
-                    
-                    with col_results:
-                        st.markdown("#### Results")
-                        
-                        # Get predictions
-                        if "Quantile" in reg_type:
-                            X_const = sm.add_constant(data[feature_cols])
-                            adv_preds = adv_model.predict(X_const)
+                            # Model-specific info
+                            if 'alpha' in result:
+                                st.markdown(f"**Optimal Alpha:** {result['alpha']:.4f}")
+                            if 'l1_ratio' in result:
+                                st.markdown(f"**L1 Ratio:** {result['l1_ratio']:.2f}")
+                            if 'selected_features' in result:
+                                st.markdown(f"**Selected Features ({result['n_selected']}):** {', '.join(result['selected_features']) if result['selected_features'] else 'None'}")
+                            if 'n_outliers' in result:
+                                st.markdown(f"**Outliers Removed:** {result['n_outliers']} ({result['outlier_pct']:.1f}%)")
                             
                             # Coefficients
+                            st.markdown("**Coefficients:**")
                             coef_df = pd.DataFrame({
-                                'Feature': ['const'] + feature_cols,
-                                'Coefficient': adv_model.params.values
+                                'Feature': list(result['coefficients'].keys()),
+                                'Coefficient': list(result['coefficients'].values())
                             })
-                        else:
-                            if scaler:
-                                X_scaled = scaler.transform(X)
-                                adv_preds = adv_model.predict(X_scaled)
-                            else:
-                                adv_preds = adv_model.predict(X)
-                            
-                            if hasattr(adv_model, 'coef_'):
-                                coef_df = pd.DataFrame({
-                                    'Feature': feature_cols,
-                                    'Coefficient': adv_model.coef_
-                                })
-                                if hasattr(adv_model, 'intercept_'):
-                                    intercept_row = pd.DataFrame({'Feature': ['Intercept'], 
-                                                                 'Coefficient': [adv_model.intercept_]})
-                                    coef_df = pd.concat([intercept_row, coef_df], ignore_index=True)
-                            else:
-                                coef_df = pd.DataFrame({'Feature': ['N/A'], 'Coefficient': [0]})
-                        
-                        # Metrics
-                        adv_rmse = np.sqrt(mean_squared_error(y, adv_preds))
-                        adv_mae = mean_absolute_error(y, adv_preds)
-                        
-                        ss_res = np.sum((y - adv_preds) ** 2)
-                        ss_tot = np.sum((y - np.mean(y)) ** 2)
-                        adv_r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-                        
-                        c1, c2, c3 = st.columns(3)
-                        with c1:
-                            render_metric("R²", f"{adv_r2:.4f}", "Fit Quality", "gold")
-                        with c2:
-                            render_metric("RMSE", f"{adv_rmse:.4f}", "Error", "info")
-                        with c3:
-                            render_metric("MAE", f"{adv_mae:.4f}", "Abs Error", "success")
-                        
-                        st.markdown("**Coefficients:**")
-                        st.dataframe(coef_df.style.format({'Coefficient': '{:.4f}'}), width="stretch")
-                        
-                        # Comparison with OLS
-                        st.markdown("---")
-                        st.markdown("#### Comparison with OLS")
-                        
-                        ols_preds = model.predict(sm.add_constant(data[feature_cols]))
-                        ols_rmse = np.sqrt(mean_squared_error(y, ols_preds))
-                        
-                        improvement = ((ols_rmse - adv_rmse) / ols_rmse) * 100
-                        
-                        if improvement > 0:
-                            st.success(f"✅ {reg_type} improved RMSE by {improvement:.2f}% vs OLS")
-                        else:
-                            st.info(f"ℹ️ OLS performs {abs(improvement):.2f}% better for this data")
-                        
-                        # Scatter plot
-                        fig_adv = px.scatter(x=y, y=adv_preds, 
-                                            labels={'x': 'Actual', 'y': 'Predicted'},
-                                            title=f"{reg_type}: Actual vs Predicted")
-                        min_v, max_v = min(y.min(), adv_preds.min()), max(y.max(), adv_preds.max())
-                        fig_adv.add_shape(type="line", x0=min_v, y0=min_v, x1=max_v, y1=max_v,
-                                         line=dict(color="#FFC300", dash="dash"))
-                        fig_adv.update_traces(marker=dict(color="#06b6d4", size=8))
-                        st.plotly_chart(update_chart_theme(fig_adv), width="stretch")
-
-            # ================================================================
-            # TAB 9: ROLLING
-            # ================================================================
-            with tab9:
-                st.markdown("### 📈 Rolling Analysis")
-                
-                st.markdown("""
-                <div class="guide-box">
-                    <b>Time-Varying Coefficients:</b> See how relationships change over time.<br>
-                    Rolling regression retrains the model on a moving window to detect regime changes and coefficient instability.
-                </div>
-                """, unsafe_allow_html=True)
-                
-                min_window = max(10, len(feature_cols) + 5)
-                max_window = len(data) // 2
-                
-                if max_window <= min_window:
-                    st.warning("Not enough data for rolling analysis. Need at least 2x the minimum window size.")
-                else:
-                    window_size = st.slider("Rolling Window Size", min_window, max_window, 
-                                           min(50, max_window), 5)
-                    
-                    if st.button("Run Rolling Regression", key="rolling_run"):
-                        with st.spinner("Calculating rolling regressions..."):
-                            rolling_df = rolling_regression(data, target_col, feature_cols, 
-                                                           window_size, date_col_option)
-                            
-                            if len(rolling_df) > 0:
-                                # R² over time
-                                st.markdown("#### R² Stability Over Time")
-                                
-                                x_axis = rolling_df['date'] if 'date' in rolling_df.columns else rolling_df['window_end']
-                                
-                                fig_r2 = px.line(rolling_df, x=x_axis, y='r_squared',
-                                                title="Rolling R² (Model Fit Over Time)")
-                                fig_r2.add_hline(y=rolling_df['r_squared'].mean(), line_dash="dash", 
-                                               line_color="#FFC300", annotation_text="Mean R²")
-                                st.plotly_chart(update_chart_theme(fig_r2), width="stretch")
-                                
-                                # Coefficient evolution
-                                st.markdown("#### Coefficient Evolution")
-                                
-                                coef_cols = [c for c in rolling_df.columns if c.startswith('coef_')]
-                                
-                                fig_coef = go.Figure()
-                                colors = ['#FFC300', '#06b6d4', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
-                                
-                                for i, col in enumerate(coef_cols):
-                                    feat_name = col.replace('coef_', '')
-                                    fig_coef.add_trace(go.Scatter(
-                                        x=x_axis, y=rolling_df[col],
-                                        mode='lines', name=feat_name,
-                                        line=dict(color=colors[i % len(colors)])
-                                    ))
-                                
-                                fig_coef.update_layout(title="Rolling Coefficients Over Time")
-                                st.plotly_chart(update_chart_theme(fig_coef), width="stretch")
-                                
-                                # Structural break detection
-                                st.markdown("#### Structural Break Detection")
-                                
-                                breaks = detect_structural_breaks(rolling_df, feature_cols)
-                                
-                                if breaks:
-                                    for brk in breaks:
-                                        st.warning(f"⚠️ **{brk['feature']}**: Potential regime change detected. "
-                                                  f"Volatility ratio: {brk['volatility_ratio']:.2f}x average")
-                                else:
-                                    st.success("✅ No significant structural breaks detected.")
-                                
-                                # Summary stats
-                                st.markdown("#### Coefficient Summary Statistics")
-                                
-                                summary_data = []
-                                for col in coef_cols:
-                                    feat_name = col.replace('coef_', '')
-                                    summary_data.append({
-                                        'Feature': feat_name,
-                                        'Mean': rolling_df[col].mean(),
-                                        'Std Dev': rolling_df[col].std(),
-                                        'Min': rolling_df[col].min(),
-                                        'Max': rolling_df[col].max(),
-                                        'Range': rolling_df[col].max() - rolling_df[col].min()
-                                    })
-                                
-                                summary_df = pd.DataFrame(summary_data)
-                                st.dataframe(summary_df.style.format({
-                                    'Mean': '{:.4f}', 'Std Dev': '{:.4f}',
-                                    'Min': '{:.4f}', 'Max': '{:.4f}', 'Range': '{:.4f}'
-                                }), width="stretch")
-                            else:
-                                st.error("Rolling regression failed.")
-
-            # ================================================================
-            # TAB 10: FEATURES
-            # ================================================================
-            with tab10:
-                st.markdown("### 🧪 Feature Engineering")
-                
-                st.markdown("""
-                <div class="guide-box">
-                    <b>Generate New Features:</b> Create lags, differences, interactions, polynomials, and more.
-                    Preview engineered features before using them in your model.
-                </div>
-                """, unsafe_allow_html=True)
-                
-                eng_cols = st.multiselect("Select columns to transform", feature_cols, 
-                                         default=feature_cols[:2] if len(feature_cols) >= 2 else feature_cols)
-                
-                if eng_cols:
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("#### Transformations")
-                        
-                        do_lags = st.checkbox("Generate Lags", value=False)
-                        if do_lags:
-                            max_lag = st.slider("Max Lag Periods", 1, 10, 3)
-                        
-                        do_diff = st.checkbox("Generate Differences", value=False)
-                        if do_diff:
-                            diff_periods = st.slider("Difference Periods", 1, 5, 1)
-                        
-                        do_rolling = st.checkbox("Generate Rolling Stats", value=False)
-                        if do_rolling:
-                            roll_window = st.slider("Rolling Window", 3, 20, 5)
-                        
-                        do_interact = st.checkbox("Generate Interactions", value=False)
-                        do_poly = st.checkbox("Generate Polynomials", value=False)
-                        if do_poly:
-                            poly_degree = st.slider("Polynomial Degree", 2, 4, 2)
-                        
-                        do_log = st.checkbox("Log Transform", value=False)
-                        do_winsor = st.checkbox("Winsorize (Outlier Handling)", value=False)
-                    
-                    with col2:
-                        st.markdown("#### Preview")
-                        
-                        if st.button("Generate Features", key="fe_generate"):
-                            eng_data = data.copy()
-                            new_features = []
-                            
-                            if do_lags:
-                                eng_data = generate_lags(eng_data, eng_cols, max_lag)
-                                for col in eng_cols:
-                                    for l in range(1, max_lag + 1):
-                                        new_features.append(f'{col}_lag{l}')
-                            
-                            if do_diff:
-                                eng_data = generate_differences(eng_data, eng_cols, diff_periods)
-                                for col in eng_cols:
-                                    new_features.append(f'{col}_diff{diff_periods}')
-                            
-                            if do_rolling:
-                                eng_data = generate_rolling_stats(eng_data, eng_cols, roll_window)
-                                for col in eng_cols:
-                                    new_features.append(f'{col}_roll_mean{roll_window}')
-                                    new_features.append(f'{col}_roll_std{roll_window}')
-                            
-                            if do_interact and len(eng_cols) > 1:
-                                eng_data = generate_interactions(eng_data, eng_cols)
-                                for i, c1 in enumerate(eng_cols):
-                                    for c2 in eng_cols[i+1:]:
-                                        new_features.append(f'{c1}_x_{c2}')
-                            
-                            if do_poly:
-                                eng_data = generate_polynomial_features(eng_data, eng_cols, poly_degree)
-                                for col in eng_cols:
-                                    for d in range(2, poly_degree + 1):
-                                        new_features.append(f'{col}_pow{d}')
-                            
-                            if do_log:
-                                eng_data = apply_log_transform(eng_data, eng_cols)
-                                for col in eng_cols:
-                                    new_features.append(f'{col}_log')
-                            
-                            if do_winsor:
-                                eng_data = winsorize_data(eng_data, eng_cols)
-                                for col in eng_cols:
-                                    new_features.append(f'{col}_winsor')
-                            
-                            st.session_state['engineered_data'] = eng_data
-                            st.session_state['new_features'] = new_features
-                            
-                            st.success(f"✅ Generated {len(new_features)} new features!")
-                            
-                            # Preview
-                            preview_cols = [target_col] + eng_cols + new_features[:5]
-                            preview_cols = [c for c in preview_cols if c in eng_data.columns]
-                            st.dataframe(eng_data[preview_cols].head(10), width="stretch")
-                            
-                            st.markdown(f"**New Features:** {', '.join(new_features)}")
-                    
-                    # PCA Preview
-                    st.markdown("---")
-                    st.markdown("#### PCA Dimensionality Reduction Preview")
-                    
-                    if st.button("Run PCA Analysis", key="pca_run"):
-                        pca_results = run_pca_preview(data, feature_cols)
-                        
-                        # Explained variance plot
-                        fig_pca = go.Figure()
-                        fig_pca.add_trace(go.Bar(
-                            x=[f'PC{i+1}' for i in range(len(pca_results['explained_variance_ratio']))],
-                            y=pca_results['explained_variance_ratio'],
-                            name='Individual',
-                            marker_color='#FFC300'
-                        ))
-                        fig_pca.add_trace(go.Scatter(
-                            x=[f'PC{i+1}' for i in range(len(pca_results['cumulative_variance']))],
-                            y=pca_results['cumulative_variance'],
-                            name='Cumulative',
-                            line=dict(color='#06b6d4')
-                        ))
-                        fig_pca.update_layout(title="PCA Explained Variance")
-                        st.plotly_chart(update_chart_theme(fig_pca), width="stretch")
-                        
-                        # Recommendation
-                        for i, cum_var in enumerate(pca_results['cumulative_variance']):
-                            if cum_var >= 0.95:
-                                st.info(f"💡 {i+1} principal components explain 95%+ of variance "
-                                       f"(vs {len(feature_cols)} original features)")
-                                break
-
-            # ================================================================
-            # TAB 11: COMPARE
-            # ================================================================
-            with tab11:
-                st.markdown("### 🏆 Model Comparison")
-                
-                st.markdown("""
-                <div class="guide-box">
-                    <b>Compare Models:</b> Test different feature sets side-by-side.
-                    Use AIC/BIC criteria to select the best model that balances fit and complexity.
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.markdown("#### Define Models to Compare")
-                
-                # Model 1: Current model
-                st.markdown("**Model 1 (Current):** " + ", ".join(feature_cols))
-                
-                # Model 2: User-defined
-                model2_features = st.multiselect("Model 2 Features", available_features, 
-                                                default=available_features[:1] if available_features else [],
-                                                key="m2_feat")
-                
-                # Model 3: User-defined
-                model3_features = st.multiselect("Model 3 Features", available_features,
-                                                default=available_features[:2] if len(available_features) >= 2 else available_features,
-                                                key="m3_feat")
-                
-                if st.button("Compare Models", key="compare_run"):
-                    feature_sets = {
-                        "Model 1 (Current)": feature_cols,
-                    }
-                    
-                    if model2_features:
-                        feature_sets["Model 2"] = model2_features
-                    if model3_features:
-                        feature_sets["Model 3"] = model3_features
-                    
-                    if len(feature_sets) < 2:
-                        st.warning("Define at least one additional model for comparison.")
+                            st.dataframe(coef_df.style.format({'Coefficient': '{:.6f}'}), width="stretch")
                     else:
-                        with st.spinner("Comparing models..."):
-                            comparison_df = compare_models(df, target_col, feature_sets, date_col_option)
-                            
-                            if len(comparison_df) > 0:
-                                # Find best model by AIC
-                                best_aic_idx = comparison_df['AIC'].idxmin()
-                                best_bic_idx = comparison_df['BIC'].idxmin()
-                                
-                                st.markdown("#### Comparison Results")
-                                
-                                # Highlight best models
-                                def highlight_best(row):
-                                    styles = [''] * len(row)
-                                    if row.name == best_aic_idx:
-                                        styles = ['background-color: rgba(16, 185, 129, 0.2)'] * len(row)
-                                    return styles
-                                
-                                st.dataframe(comparison_df.style.apply(highlight_best, axis=1).format({
-                                    'R²': '{:.4f}',
-                                    'Adj R²': '{:.4f}',
-                                    'AIC': '{:.2f}',
-                                    'BIC': '{:.2f}',
-                                    'RMSE': '{:.4f}',
-                                    'MAE': '{:.4f}',
-                                    'F-stat': '{:.2f}',
-                                    'F p-val': '{:.4e}'
-                                }), width="stretch")
-                                
-                                # Winner announcement
-                                best_model = comparison_df.loc[best_aic_idx, 'Model']
-                                st.success(f"🏆 **Best Model (by AIC):** {best_model}")
-                                
-                                if best_aic_idx != best_bic_idx:
-                                    st.info(f"ℹ️ BIC prefers: {comparison_df.loc[best_bic_idx, 'Model']}")
-                                
-                                # Visual comparison
-                                st.markdown("#### Visual Comparison")
-                                
-                                fig_comp = make_subplots(rows=1, cols=3, 
-                                                        subplot_titles=('R²', 'AIC (lower=better)', 'RMSE'))
-                                
-                                fig_comp.add_trace(go.Bar(x=comparison_df['Model'], y=comparison_df['R²'],
-                                                        marker_color='#FFC300'), row=1, col=1)
-                                fig_comp.add_trace(go.Bar(x=comparison_df['Model'], y=comparison_df['AIC'],
-                                                        marker_color='#06b6d4'), row=1, col=2)
-                                fig_comp.add_trace(go.Bar(x=comparison_df['Model'], y=comparison_df['RMSE'],
-                                                        marker_color='#10b981'), row=1, col=3)
-                                
-                                fig_comp.update_layout(showlegend=False, height=400)
-                                st.plotly_chart(update_chart_theme(fig_comp), width="stretch")
-                                
-                                # Nested F-test (if applicable)
-                                st.markdown("---")
-                                st.markdown("#### Nested Model F-Test")
-                                st.caption("Tests if adding features significantly improves the model.")
-                                
-                                # Run F-test between smallest and largest model
-                                sorted_models = comparison_df.sort_values('Features')
-                                if len(sorted_models) >= 2:
-                                    restricted_name = sorted_models.iloc[0]['Model']
-                                    full_name = sorted_models.iloc[-1]['Model']
-                                    
-                                    restricted_features = feature_sets[restricted_name]
-                                    full_features = feature_sets[full_name]
-                                    
-                                    # Only test if one is nested in the other
-                                    if set(restricted_features).issubset(set(full_features)):
-                                        clean_r = clean_data(df, target_col, restricted_features, date_col_option)
-                                        clean_f = clean_data(df, target_col, full_features, date_col_option)
-                                        
-                                        model_r, _ = run_regression(clean_r, target_col, restricted_features)
-                                        model_f, _ = run_regression(clean_f, target_col, full_features)
-                                        
-                                        if model_r and model_f:
-                                            f_stat, f_pval = nested_model_f_test(model_r, model_f, len(clean_f))
-                                            
-                                            if f_stat and f_pval:
-                                                c1, c2 = st.columns(2)
-                                                with c1:
-                                                    render_metric("F-Statistic", f"{f_stat:.4f}", 
-                                                                 f"{restricted_name} vs {full_name}", "info")
-                                                with c2:
-                                                    sig_style = "success" if f_pval < 0.05 else "warning"
-                                                    render_metric("P-Value", f"{f_pval:.4e}", 
-                                                                 "Significant" if f_pval < 0.05 else "Not Sig.", sig_style)
-                                                
-                                                if f_pval < 0.05:
-                                                    st.success(f"✅ The additional features in {full_name} significantly improve the model.")
-                                                else:
-                                                    st.warning(f"⚠️ The simpler {restricted_name} may be sufficient (extra features don't help significantly).")
-                            else:
-                                st.error("Model comparison failed.")
+                        with st.expander(f"❌ {model_name} — Error"):
+                            st.error(result['error'])
+                
+                # Bottom Line
+                st.markdown("---")
+                
+                # Determine verdict based on diagnostics
+                issues = []
+                if diag['multicollinearity']:
+                    issues.append("multicollinearity")
+                if diag['has_outliers']:
+                    issues.append("outliers")
+                if diag['is_skewed']:
+                    issues.append("skewed distribution")
+                if diag['low_sample']:
+                    issues.append("limited sample size")
+                
+                if not issues:
+                    verdict = f"Your data is clean — {best_model} is recommended for optimal performance"
+                    verdict_type = "success"
+                    explanation = f"No significant data quality issues detected. The {best_model} model achieves R² = {basket_results[best_model]['r2']:.3f} and RMSE = {basket_results[best_model]['rmse']:.4f}."
+                    next_steps = [
+                        f"Use {best_model} for your predictions",
+                        "The model results in other tabs are based on OLS — consider if {best_model} coefficients differ significantly".format(best_model=best_model),
+                        "Monitor performance on new data"
+                    ]
+                else:
+                    verdict = f"Data has challenges ({', '.join(issues)}) — {best_model} is specifically chosen to handle them"
+                    verdict_type = "warning"
+                    explanation = f"Your data has some characteristics that standard OLS may not handle optimally. The {best_model} model is designed to address these issues while achieving R² = {basket_results[best_model]['r2']:.3f}."
+                    next_steps = [
+                        f"Use {best_model} instead of OLS for more reliable predictions",
+                        "Review the coefficient differences between models",
+                        "Consider addressing the underlying data issues if possible"
+                    ]
+                    if diag['multicollinearity']:
+                        next_steps.append("High correlation between predictors — consider removing redundant features")
+                    if diag['has_outliers']:
+                        next_steps.append("Outliers detected — investigate if they are errors or genuine extreme values")
+                
+                render_bottom_line("Bottom Line: Model Recommendation", verdict, explanation, next_steps, verdict_type)
 
         except Exception as e:
             st.error(f"Error: {str(e)}")
@@ -3087,7 +2925,7 @@ def main():
                     <div class="metric-card">
                         <h4>📉 RESIDUALS</h4>
                         <h2 style="font-size: 1.1rem;">Time Series</h2>
-                        <p class="sub-metric">Prediction errors over time, drift detection, move residuals</p>
+                        <p class="sub-metric">Prediction errors, correlation analysis, drift detection</p>
                     </div>
                 """, unsafe_allow_html=True)
             
@@ -3096,7 +2934,7 @@ def main():
                     <div class="metric-card">
                         <h4>📊 PERFORMANCE</h4>
                         <h2 style="font-size: 1.1rem;">Model Fit</h2>
-                        <p class="sub-metric">R², Adjusted R², RMSE, F-statistic, significance tests</p>
+                        <p class="sub-metric">R², Adjusted R², RMSE, F-statistic, significance</p>
                     </div>
                 """, unsafe_allow_html=True)
             
@@ -3105,7 +2943,7 @@ def main():
                     <div class="metric-card">
                         <h4>📐 EQUATION</h4>
                         <h2 style="font-size: 1.1rem;">Coefficients</h2>
-                        <p class="sub-metric">Model equation, p-values, confidence intervals, interpretation</p>
+                        <p class="sub-metric">Model equation, business interpretation, drivers</p>
                     </div>
                 """, unsafe_allow_html=True)
             
@@ -3120,7 +2958,7 @@ def main():
                     <div class="metric-card">
                         <h4>🔍 PREDICTIONS</h4>
                         <h2 style="font-size: 1.1rem;">Actual vs Predicted</h2>
-                        <p class="sub-metric">Deviation analysis, extreme misses, bias detection</p>
+                        <p class="sub-metric">Deviation analysis, extreme misses, bias</p>
                     </div>
                 """, unsafe_allow_html=True)
             
@@ -3144,62 +2982,18 @@ def main():
             
             st.markdown("")
             
-            # Advanced Row
-            st.markdown("##### Advanced Tools")
-            c7, c8, c9 = st.columns(3)
-            
-            with c7:
-                st.markdown("""
-                    <div class="metric-card">
-                        <h4>🔮 SIMULATE</h4>
-                        <h2 style="font-size: 1.1rem;">Backtesting</h2>
-                        <p class="sub-metric">What-if scenarios, walk-forward, Monte Carlo</p>
-                    </div>
-                """, unsafe_allow_html=True)
+            # Model Selection Row
+            st.markdown("##### Intelligent Model Selection")
+            c7, c8, c9 = st.columns([1, 2, 1])
             
             with c8:
                 st.markdown("""
-                    <div class="metric-card">
-                        <h4>⚙️ MODELS</h4>
-                        <h2 style="font-size: 1.1rem;">Advanced Regression</h2>
-                        <p class="sub-metric">Ridge, Lasso, Elastic Net, Huber, RANSAC, Quantile</p>
+                    <div class="metric-card" style="border-color: #FFC300;">
+                        <h4 style="color: #FFC300;">🎯 MODEL SELECTION</h4>
+                        <h2 style="font-size: 1.1rem;">Regression Basket</h2>
+                        <p class="sub-metric">Automatically compares 7 models (OLS, Ridge, Lasso, Elastic Net, Huber, RANSAC, Quantile) and recommends the best one based on your data characteristics</p>
                     </div>
                 """, unsafe_allow_html=True)
-            
-            with c9:
-                st.markdown("""
-                    <div class="metric-card">
-                        <h4>📈 ROLLING</h4>
-                        <h2 style="font-size: 1.1rem;">Time-Varying</h2>
-                        <p class="sub-metric">Rolling coefficients, regime detection, stability</p>
-                    </div>
-                """, unsafe_allow_html=True)
-            
-            st.markdown("")
-            
-            # Tools Row
-            c10, c11, c12 = st.columns(3)
-            
-            with c10:
-                st.markdown("""
-                    <div class="metric-card">
-                        <h4>🧪 FEATURES</h4>
-                        <h2 style="font-size: 1.1rem;">Engineering</h2>
-                        <p class="sub-metric">Lags, differences, interactions, polynomials, PCA</p>
-                    </div>
-                """, unsafe_allow_html=True)
-            
-            with c11:
-                st.markdown("""
-                    <div class="metric-card">
-                        <h4>🏆 COMPARE</h4>
-                        <h2 style="font-size: 1.1rem;">Model Selection</h2>
-                        <p class="sub-metric">AIC/BIC criteria, nested F-tests, side-by-side</p>
-                    </div>
-                """, unsafe_allow_html=True)
-            
-            with c12:
-                pass
         
         # TAB 3: ABOUT
         with landing_tab3:
@@ -3223,10 +3017,10 @@ def main():
                 st.markdown("""
                     <div class="metric-card" style="min-height: 180px;">
                         <h4>⚡ FEATURES</h4>
-                        <h2 style="font-size: 1.2rem; color: #EAEAEA;">11 Analysis Modules</h2>
+                        <h2 style="font-size: 1.2rem; color: #EAEAEA;">7 Analysis Modules</h2>
                         <p style="color: #888; font-size: 0.9rem; line-height: 1.6; margin-top: 1rem;">
-                            From basic OLS to advanced regularization, rolling analysis, 
-                            Monte Carlo simulation, and model comparison.
+                            Comprehensive regression analysis with intelligent model selection 
+                            that automatically compares 7 different regression algorithms.
                         </p>
                     </div>
                 """, unsafe_allow_html=True)
