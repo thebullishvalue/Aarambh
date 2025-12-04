@@ -2121,96 +2121,250 @@ def main():
             st.code(traceback.format_exc())
     
     else:
-        # Landing page - Clean & Professional
-        st.markdown("")
-        st.markdown("")
+        # Landing page - Tabbed with Cards
         
-        # Centered title section
-        col_l, col_m, col_r = st.columns([1, 2, 1])
-        with col_m:
+        # Header
+        st.markdown("""
+            <div style="text-align: center; padding: 3rem 0 2rem 0;">
+                <h1 style="color: #FFC300; font-size: 2.8rem; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: -1px;">
+                    Regression Lab Pro
+                </h1>
+                <p style="color: #888; font-size: 1.05rem; font-weight: 400;">
+                    Multi-Variable Modeling & Predictive Analytics
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Landing page tabs
+        landing_tab1, landing_tab2, landing_tab3 = st.tabs(["🚀 Get Started", "📊 Modules", "📖 About"])
+        
+        # TAB 1: GET STARTED
+        with landing_tab1:
+            st.markdown("")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("""
+                    <div class="metric-card" style="border-left: 3px solid #FFC300; min-height: 200px;">
+                        <h4 style="color: #FFC300;">📤 UPLOAD FILE</h4>
+                        <h2 style="font-size: 1.3rem; color: #EAEAEA; margin-bottom: 1rem;">Local Data</h2>
+                        <p style="color: #888; font-size: 0.9rem; line-height: 1.6;">
+                            Upload CSV or Excel files directly from your computer. 
+                            Supports any tabular data with numeric columns.
+                        </p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("""
+                    <div class="metric-card" style="border-left: 3px solid #10b981; min-height: 200px;">
+                        <h4 style="color: #10b981;">📊 GOOGLE SHEETS</h4>
+                        <h2 style="font-size: 1.3rem; color: #EAEAEA; margin-bottom: 1rem;">Cloud Data</h2>
+                        <p style="color: #888; font-size: 0.9rem; line-height: 1.6;">
+                            Connect directly via URL. Pre-configured with NIFTY50 PE analysis 
+                            including interest rates, yields, and market ratios.
+                        </p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("")
+            st.markdown("")
+            
             st.markdown("""
-                <div style="text-align: center; padding: 2rem 0;">
-                    <h1 style="color: #FFC300; font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: -1px;">
-                        Regression Lab Pro
-                    </h1>
-                    <p style="color: #666; font-size: 1.1rem; font-weight: 300;">
-                        Multi-Variable Modeling & Predictive Analytics
-                    </p>
+                <div class="guide-box">
+                    <h4 style="color:#FFC300; margin-top:0;">Quick Start</h4>
+                    <b>1.</b> Select data source in sidebar → 
+                    <b>2.</b> Choose Target (Y) → 
+                    <b>3.</b> Select Predictors (X) → 
+                    <b>4.</b> Explore analysis tabs
                 </div>
             """, unsafe_allow_html=True)
         
-        st.markdown("")
-        st.markdown("---")
-        st.markdown("")
+        # TAB 2: MODULES
+        with landing_tab2:
+            st.markdown("")
+            
+            # Primary Analysis Row
+            st.markdown("##### Primary Analysis")
+            c1, c2, c3 = st.columns(3)
+            
+            with c1:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>📉 RESIDUALS</h4>
+                        <h2 style="font-size: 1.1rem;">Time Series</h2>
+                        <p class="sub-metric">Prediction errors over time, drift detection, move residuals</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with c2:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>📊 PERFORMANCE</h4>
+                        <h2 style="font-size: 1.1rem;">Model Fit</h2>
+                        <p class="sub-metric">R², Adjusted R², RMSE, F-statistic, significance tests</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with c3:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>📐 EQUATION</h4>
+                        <h2 style="font-size: 1.1rem;">Coefficients</h2>
+                        <p class="sub-metric">Model equation, p-values, confidence intervals, interpretation</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("")
+            
+            # Validation Row
+            st.markdown("##### Validation & Diagnostics")
+            c4, c5, c6 = st.columns(3)
+            
+            with c4:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>🔍 PREDICTIONS</h4>
+                        <h2 style="font-size: 1.1rem;">Actual vs Predicted</h2>
+                        <p class="sub-metric">Deviation analysis, extreme misses, bias detection</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with c5:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>🌊 MOVES</h4>
+                        <h2 style="font-size: 1.1rem;">Delta Analysis</h2>
+                        <p class="sub-metric">Period-over-period changes, directional accuracy</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with c6:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>🛠️ DIAGNOSTICS</h4>
+                        <h2 style="font-size: 1.1rem;">Statistical Tests</h2>
+                        <p class="sub-metric">Normality, heteroscedasticity, autocorrelation, VIF</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("")
+            
+            # Advanced Row
+            st.markdown("##### Advanced Tools")
+            c7, c8, c9 = st.columns(3)
+            
+            with c7:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>🔮 SIMULATE</h4>
+                        <h2 style="font-size: 1.1rem;">Backtesting</h2>
+                        <p class="sub-metric">What-if scenarios, walk-forward, Monte Carlo</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with c8:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>⚙️ MODELS</h4>
+                        <h2 style="font-size: 1.1rem;">Advanced Regression</h2>
+                        <p class="sub-metric">Ridge, Lasso, Elastic Net, Huber, RANSAC, Quantile</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with c9:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>📈 ROLLING</h4>
+                        <h2 style="font-size: 1.1rem;">Time-Varying</h2>
+                        <p class="sub-metric">Rolling coefficients, regime detection, stability</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("")
+            
+            # Tools Row
+            c10, c11, c12 = st.columns(3)
+            
+            with c10:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>🧪 FEATURES</h4>
+                        <h2 style="font-size: 1.1rem;">Engineering</h2>
+                        <p class="sub-metric">Lags, differences, interactions, polynomials, PCA</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with c11:
+                st.markdown("""
+                    <div class="metric-card">
+                        <h4>🏆 COMPARE</h4>
+                        <h2 style="font-size: 1.1rem;">Model Selection</h2>
+                        <p class="sub-metric">AIC/BIC criteria, nested F-tests, side-by-side</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with c12:
+                pass
         
-        # Two column layout for getting started
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### 📁 Getting Started")
-            st.markdown("""
-                1. Select **Upload** or **Google Sheets** in the sidebar
-                2. Choose your **Target** variable (Y)  
-                3. Select one or more **Predictors** (X)
-                4. Explore the analysis tabs
-            """)
-        
-        with col2:
-            st.markdown("#### 📊 Default Dataset")
-            st.markdown("""
-                Google Sheets comes pre-configured with:
-                - **Target:** NIFTY50_PE
-                - **Predictors:** Interest rates, yields, ratios
-                - Ready for immediate analysis
-            """)
-        
-        st.markdown("")
-        st.markdown("---")
-        st.markdown("")
-        
-        # Analysis modules in a clean table format
-        st.markdown("#### 🔬 Analysis Modules")
-        st.markdown("")
-        
-        c1, c2, c3 = st.columns(3)
-        
-        with c1:
-            st.markdown("""
-                **Primary**
-                - 📉 Residuals — Time series errors
-                - 📊 Performance — Model fit metrics
-                - 📐 Equation — Coefficients
-            """)
-        
-        with c2:
-            st.markdown("""
-                **Validation**
-                - 🔍 Predictions — Actual vs predicted
-                - 🌊 Moves — Change analysis
-                - 🛠️ Diagnostics — Statistical tests
-            """)
-        
-        with c3:
-            st.markdown("""
-                **Advanced**
-                - 🔮 Simulate — What-if & backtest
-                - ⚙️ Models — Ridge, Lasso, Quantile
-                - 📈 Rolling — Time-varying coefficients
-            """)
-        
-        st.markdown("")
-        
-        c4, c5, c6 = st.columns(3)
-        with c4:
-            pass
-        with c5:
-            st.markdown("""
-                **Tools**
-                - 🧪 Features — Engineering
-                - 🏆 Compare — Model selection
-            """)
-        with c6:
-            pass
+        # TAB 3: ABOUT
+        with landing_tab3:
+            st.markdown("")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("""
+                    <div class="metric-card" style="min-height: 180px;">
+                        <h4>🎯 PURPOSE</h4>
+                        <h2 style="font-size: 1.2rem; color: #EAEAEA;">Quantitative Analysis</h2>
+                        <p style="color: #888; font-size: 0.9rem; line-height: 1.6; margin-top: 1rem;">
+                            Professional-grade regression analysis for financial modeling, 
+                            research, and data-driven decision making.
+                        </p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("""
+                    <div class="metric-card" style="min-height: 180px;">
+                        <h4>⚡ FEATURES</h4>
+                        <h2 style="font-size: 1.2rem; color: #EAEAEA;">11 Analysis Modules</h2>
+                        <p style="color: #888; font-size: 0.9rem; line-height: 1.6; margin-top: 1rem;">
+                            From basic OLS to advanced regularization, rolling analysis, 
+                            Monte Carlo simulation, and model comparison.
+                        </p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("")
+            
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                st.markdown("""
+                    <div class="metric-card" style="min-height: 180px;">
+                        <h4>📈 DEFAULT DATA</h4>
+                        <h2 style="font-size: 1.2rem; color: #EAEAEA;">NIFTY50 PE Analysis</h2>
+                        <p style="color: #888; font-size: 0.9rem; line-height: 1.6; margin-top: 1rem;">
+                            Pre-loaded dataset with Indian & US interest rates, 
+                            yield curves, and market valuation metrics.
+                        </p>
+                    </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                st.markdown("""
+                    <div class="metric-card" style="min-height: 180px;">
+                        <h4>🏛️ SUITE</h4>
+                        <h2 style="font-size: 1.2rem; color: #EAEAEA;">Arthagati Analytics</h2>
+                        <p style="color: #888; font-size: 0.9rem; line-height: 1.6; margin-top: 1rem;">
+                            Part of the Arthagati quantitative analytics suite 
+                            for institutional-grade financial analysis.
+                        </p>
+                    </div>
+                """, unsafe_allow_html=True)
 
     # --- Footer ---
     st.markdown(f"""
