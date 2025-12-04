@@ -878,25 +878,30 @@ def main():
                 st.error(f"Model Error: {err}")
                 return
 
-            # --- TABS ---
+            # --- TABS (Organized by workflow) ---
+            # Group 1: Primary Analysis (What you came here for)
+            # Group 2: Model Understanding (How the model works)
+            # Group 3: Validation & Testing (Is the model reliable?)
+            # Group 4: Advanced Tools (Power user features)
+            
             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
-                "📊 Model Performance", 
-                "📐 Coefficients", 
-                "🛠 Diagnostics",
-                "🔍 Prediction Analysis",
-                "🌊 Delta Analysis",
-                "📉 Time Series Residuals",
-                "🔮 Simulation",
-                "⚙️ Advanced Regression",
-                "📈 Rolling Analysis",
-                "🧪 Feature Engineering",
-                "🏆 Model Comparison"
+                "📉 Residuals",           # PRIMARY: Time series residual analysis
+                "📊 Performance",          # Model fit metrics
+                "📐 Equation",             # Coefficients & interpretation
+                "🔍 Predictions",          # Actual vs predicted deep dive
+                "🌊 Moves",                # Delta/change analysis
+                "🛠️ Diagnostics",          # Statistical tests
+                "🔮 Simulate",             # What-if & backtesting
+                "⚙️ Models",               # Advanced regression types
+                "📈 Rolling",              # Time-varying analysis
+                "🧪 Features",             # Feature engineering
+                "🏆 Compare"               # Model comparison
             ])
 
             # ================================================================
-            # TAB 1: MODEL PERFORMANCE (Original)
+            # TAB 2: PERFORMANCE
             # ================================================================
-            with tab1:
+            with tab2:
                 c1, c2, c3, c4 = st.columns(4)
                 
                 r2 = model.rsquared
@@ -945,9 +950,9 @@ def main():
                     """, unsafe_allow_html=True)
 
             # ================================================================
-            # TAB 2: COEFFICIENTS (Original)
+            # TAB 3: EQUATION & COEFFICIENTS
             # ================================================================
-            with tab2:
+            with tab3:
                 st.markdown("#### Model Equation")
                 intercept = model.params['const']
                 equation_str = f"{target_col} = {intercept:.4f}"
@@ -1021,9 +1026,9 @@ def main():
                     """, unsafe_allow_html=True)
 
             # ================================================================
-            # TAB 3: DIAGNOSTICS (Original)
+            # TAB 6: DIAGNOSTICS
             # ================================================================
-            with tab3:
+            with tab6:
                 residuals = model.resid
                 
                 st.markdown("#### 1. Normality of Residuals")
@@ -1086,7 +1091,7 @@ def main():
                     st.info("VIF requires 2+ features.")
 
             # ================================================================
-            # TAB 4: PREDICTION ANALYSIS (Original)
+            # TAB 4: PREDICTIONS
             # ================================================================
             with tab4:
                 preds = model.predict(sm.add_constant(data[feature_cols]))
@@ -1153,18 +1158,18 @@ def main():
                     st.dataframe(analysis_df.nsmallest(5, 'Deviation')[disp_cols], use_container_width=True)
 
             # ================================================================
-            # TAB 5: DELTA ANALYSIS (Original)
+            # TAB 5: MOVES (Delta Analysis)
             # ================================================================
             with tab5:
-                st.markdown("### 🌊 Delta (Move) Analysis")
+                st.markdown("### 🌊 Move Analysis")
                 st.markdown("""
                 <div class="guide-box">
-                    <h4 style="color:#FFC300; margin-top:0;">Logic: Analyzing "Changes" instead of "Levels"</h4>
+                    <h4 style="color:#FFC300; margin-top:0;">Analyzing Changes Instead of Levels</h4>
                     This tab calculates the <b>Period-over-Period Change (Delta)</b> for your features.<br>
-                    It effectively asks: <i>"Based on the coefficients derived from the main model, did the Target change as expected given the changes in Features?"</i><br>
+                    It asks: <i>"Based on the model coefficients, did the Target change as expected given the changes in Features?"</i><br>
                     <br>
-                    <b>Predicted Move</b> = Σ (Change in Feature × Coefficient)<br>
-                    <b>Move Residual</b> = Actual Move - Predicted Move
+                    <b>Predicted Move</b> = Σ (Δ Feature × Coefficient)<br>
+                    <b>Move Residual</b> = Actual Move − Predicted Move
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1235,16 +1240,15 @@ def main():
                 st.plotly_chart(update_chart_theme(fig_move_resid), use_container_width=True)
 
             # ================================================================
-            # TAB 6: TIME SERIES RESIDUALS (NEW DEDICATED TAB)
+            # TAB 1: RESIDUALS (Primary Analysis View)
             # ================================================================
-            with tab6:
-                st.markdown("### 📉 Time Series Residuals")
+            with tab1:
+                st.markdown("### 📉 Residual Analysis")
                 st.markdown("""
                 <div class="guide-box">
-                    <h4 style="color:#FFC300; margin-top:0;">Residual Analysis Over Time</h4>
-                    This tab provides a dedicated view of how prediction errors evolve over time.
-                    Use these charts to identify periods where the model systematically over or under-predicts,
-                    detect regime changes, and spot anomalies.
+                    <h4 style="color:#FFC300; margin-top:0;">How Prediction Errors Evolve Over Time</h4>
+                    Identify periods where the model systematically over or under-predicts,
+                    detect regime changes, and spot anomalies in your data.
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -1376,14 +1380,14 @@ def main():
                     st.success(f"✅ **No Significant Drift:** Cumulative residual is {final_cumul:.2f}. Model appears unbiased over time.")
 
             # ================================================================
-            # TAB 7: SIMULATION (Original + Enhanced)
+            # TAB 7: SIMULATE
             # ================================================================
             with tab7:
                 st.markdown("### 🔮 Simulation & Backtesting")
                 
                 subtab_sim, subtab_bt, subtab_wf, subtab_mc = st.tabs([
-                    "🎛️ What-If Simulator", 
-                    "🔙 Simple Backtest",
+                    "🎛️ What-If", 
+                    "🔙 Backtest",
                     "🚶 Walk-Forward",
                     "🎲 Monte Carlo"
                 ])
@@ -1605,11 +1609,10 @@ def main():
                                 st.error("Monte Carlo simulation failed.")
 
             # ================================================================
-            # TAB 8: ADVANCED REGRESSION TYPES (NEW)
+            # TAB 8: MODELS (Advanced Regression Types)
             # ================================================================
             with tab8:
-                st.markdown("### ⚙️ Advanced Regression Types")
-                st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
+                st.markdown("### ⚙️ Advanced Models")
                 
                 if not SKLEARN_AVAILABLE:
                     st.error("scikit-learn is required for advanced regression types.")
@@ -1732,15 +1735,14 @@ def main():
                         st.plotly_chart(update_chart_theme(fig_adv), use_container_width=True)
 
             # ================================================================
-            # TAB 9: ROLLING ANALYSIS (NEW)
+            # TAB 9: ROLLING
             # ================================================================
             with tab9:
-                st.markdown("### 📈 Rolling Window Analysis")
-                st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
+                st.markdown("### 📈 Rolling Analysis")
                 
                 st.markdown("""
                 <div class="guide-box">
-                    <b>Purpose:</b> See how relationships change over time.<br>
+                    <b>Time-Varying Coefficients:</b> See how relationships change over time.<br>
                     Rolling regression retrains the model on a moving window to detect regime changes and coefficient instability.
                 </div>
                 """, unsafe_allow_html=True)
@@ -1826,16 +1828,15 @@ def main():
                                 st.error("Rolling regression failed.")
 
             # ================================================================
-            # TAB 10: FEATURE ENGINEERING (NEW)
+            # TAB 10: FEATURES
             # ================================================================
             with tab10:
-                st.markdown("### 🧪 Feature Engineering Module")
-                st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
+                st.markdown("### 🧪 Feature Engineering")
                 
                 st.markdown("""
                 <div class="guide-box">
-                    Generate new features from your existing data. Select transformations below and 
-                    preview the engineered features before using them in your model.
+                    <b>Generate New Features:</b> Create lags, differences, interactions, polynomials, and more.
+                    Preview engineered features before using them in your model.
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -1958,16 +1959,15 @@ def main():
                                 break
 
             # ================================================================
-            # TAB 11: MODEL COMPARISON (NEW)
+            # TAB 11: COMPARE
             # ================================================================
             with tab11:
-                st.markdown("### 🏆 Model Comparison Framework")
-                st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
+                st.markdown("### 🏆 Model Comparison")
                 
                 st.markdown("""
                 <div class="guide-box">
-                    Compare multiple models with different feature sets side-by-side.
-                    Use AIC/BIC to select the best model that balances fit and complexity.
+                    <b>Compare Models:</b> Test different feature sets side-by-side.
+                    Use AIC/BIC criteria to select the best model that balances fit and complexity.
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -2100,45 +2100,75 @@ def main():
     else:
         # Landing page
         st.markdown("""
-        <div style="text-align: center; padding: 3rem;">
-            <h2 style="color: #FFC300;">Welcome to Regression Lab Pro</h2>
-            <p style="color: #888; font-size: 1.1rem;">
-                Upload your data or connect to Google Sheets to begin advanced regression analysis.
+        <div style="text-align: center; padding: 2rem 1rem;">
+            <h2 style="color: #FFC300; margin-bottom: 0.5rem;">Welcome to Regression Lab Pro</h2>
+            <p style="color: #888; font-size: 1rem; margin-bottom: 2rem;">
+                Multi-variable modeling & predictive analytics
             </p>
-            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 2rem; margin-bottom: 2rem;">
+            
+            <p style="color: #666; font-size: 0.9rem; margin-bottom: 1.5rem;">
+                <b>Data Sources</b>
+            </p>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; max-width: 500px; margin: 0 auto 2rem auto;">
                 <div class="metric-card" style="border-color: #FFC300;">
-                    <h4>📤 UPLOAD FILE</h4>
-                    <p style="font-size:0.85rem; color:#888;">CSV or Excel files from your computer</p>
+                    <h4>📤 Upload</h4>
+                    <p style="font-size:0.8rem; color:#666;">CSV / Excel</p>
                 </div>
                 <div class="metric-card" style="border-color: #10b981;">
-                    <h4>📊 GOOGLE SHEETS</h4>
-                    <p style="font-size:0.85rem; color:#888;">Connect directly to your Google Sheets data</p>
-                </div>
-                <div class="metric-card" style="border-color: #06b6d4;">
-                    <h4>📉 TIME SERIES</h4>
-                    <p style="font-size:0.85rem; color:#888;">Dedicated residual analysis over time</p>
+                    <h4>📊 Google Sheets</h4>
+                    <p style="font-size:0.8rem; color:#666;">Direct URL</p>
                 </div>
             </div>
-            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-top: 1rem;">
+            
+            <p style="color: #666; font-size: 0.9rem; margin-bottom: 1rem;">
+                <b>Analysis Modules</b>
+            </p>
+            <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.75rem; margin-top: 1rem;">
                 <div class="metric-card">
-                    <h4>ADVANCED MODELS</h4>
-                    <p style="font-size:0.85rem; color:#888;">Ridge, Lasso, Elastic Net, Huber, RANSAC, Quantile</p>
+                    <h4>📉</h4>
+                    <p style="font-size:0.75rem; color:#666;">Residuals</p>
                 </div>
                 <div class="metric-card">
-                    <h4>ROLLING ANALYSIS</h4>
-                    <p style="font-size:0.85rem; color:#888;">Time-varying coefficients & regime detection</p>
+                    <h4>📊</h4>
+                    <p style="font-size:0.75rem; color:#666;">Performance</p>
                 </div>
                 <div class="metric-card">
-                    <h4>FEATURE ENGINEERING</h4>
-                    <p style="font-size:0.85rem; color:#888;">Lags, diffs, interactions, polynomials, PCA</p>
+                    <h4>📐</h4>
+                    <p style="font-size:0.75rem; color:#666;">Equation</p>
                 </div>
                 <div class="metric-card">
-                    <h4>MODEL COMPARISON</h4>
-                    <p style="font-size:0.85rem; color:#888;">AIC/BIC selection & nested F-tests</p>
+                    <h4>🔍</h4>
+                    <p style="font-size:0.75rem; color:#666;">Predictions</p>
                 </div>
                 <div class="metric-card">
-                    <h4>ENHANCED BACKTEST</h4>
-                    <p style="font-size:0.85rem; color:#888;">Walk-forward & Monte Carlo simulation</p>
+                    <h4>🌊</h4>
+                    <p style="font-size:0.75rem; color:#666;">Moves</p>
+                </div>
+                <div class="metric-card">
+                    <h4>🛠️</h4>
+                    <p style="font-size:0.75rem; color:#666;">Diagnostics</p>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin-top: 0.75rem;">
+                <div class="metric-card">
+                    <h4>🔮</h4>
+                    <p style="font-size:0.75rem; color:#666;">Simulate</p>
+                </div>
+                <div class="metric-card">
+                    <h4>⚙️</h4>
+                    <p style="font-size:0.75rem; color:#666;">Models</p>
+                </div>
+                <div class="metric-card">
+                    <h4>📈</h4>
+                    <p style="font-size:0.75rem; color:#666;">Rolling</p>
+                </div>
+                <div class="metric-card">
+                    <h4>🧪</h4>
+                    <p style="font-size:0.75rem; color:#666;">Features</p>
+                </div>
+                <div class="metric-card">
+                    <h4>🏆</h4>
+                    <p style="font-size:0.75rem; color:#666;">Compare</p>
                 </div>
             </div>
         </div>
