@@ -581,13 +581,6 @@ def render_bottom_line(title, verdict, explanation, next_steps, verdict_type="in
         {"<div style='margin-top: 1rem;'><p style='color: #888; font-size: 0.85rem; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;'>Recommended Actions:</p><ul style='color: #EAEAEA; margin: 0; padding-left: 1.25rem; font-size: 0.9rem;'>" + steps_html + "</ul></div>" if next_steps else ""}
     </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown(f"""
-        <div style="background: {bg_color}; border-left: 4px solid {border_color}; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
-            <h4 style="color: {border_color}; margin: 0 0 0.5rem 0;">{title}</h4>
-            <p style="color: #EAEAEA; margin: 0; font-size: 0.95rem; line-height: 1.6;">{content}</p>
-        </div>
-    """, unsafe_allow_html=True)
 
 def clean_data(df, target, features, date_col=None):
     """Cleans dataframe for specific columns and optional date."""
