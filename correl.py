@@ -1878,6 +1878,141 @@ def main():
                 fig_cumul.update_layout(height=350)
                 st.plotly_chart(update_chart_theme(fig_cumul), width="stretch")
                 
+                st.markdown("---")
+                
+                # ---- NEW: Correlation Analysis Section ----
+                st.markdown("#### 🔗 Residual Correlation Analysis")
+                st.caption("Deep dive into the relationship between target values and prediction errors. Ideally, residuals should be uncorrelated with the target.")
+                
+                # Calculate correlations
+                level_resid_corr, level_resid_pval = stats.pearsonr(ts_df_sorted[target_col], ts_df_sorted['Deviation'])
+                move_resid_corr, move_resid_pval = stats.pearsonr(ts_delta_df['Actual_Move'], ts_delta_df['Move_Residual'])
+                
+                # Also calculate correlation between target level and move residual (cross-analysis)
+                # Need to align the data
+                ts_df_sorted_aligned = ts_df_sorted.copy()
+                ts_df_sorted_aligned['Move_Residual'] = ts_delta_df['Move_Residual'].reindex(ts_df_sorted_aligned.index)
+                ts_df_sorted_aligned = ts_df_sorted_aligned.dropna()
+                
+                if len(ts_df_sorted_aligned) > 5:
+                    cross_corr, cross_pval = stats.pearsonr(ts_df_sorted_aligned[target_col], ts_df_sorted_aligned['Move_Residual'])
+                else:
+                    cross_corr, cross_pval = 0, 1
+                
+                # Two column layout for scatter plots
+                col_left, col_right = st.columns(2)
+                
+                with col_left:
+                    st.markdown("**Target vs Level Residuals**")
+                    fig_corr1 = px.scatter(
+                        ts_df_sorted,
+                        x=target_col,
+                        y='Deviation',
+                        title=f"Correlation: {level_resid_corr:.3f}",
+                        trendline="ols",
+                        labels={'Deviation': 'Level Residual (Act - Pred)'}
+                    )
+                    fig_corr1.update_traces(marker=dict(color='#06b6d4', size=6, opacity=0.6))
+                    fig_corr1.add_hline(y=0, line_dash="dash", line_color="#FFC300", opacity=0.5)
+                    fig_corr1.update_layout(height=350)
+                    st.plotly_chart(update_chart_theme(fig_corr1), width="stretch")
+                    
+                    # Interpretation
+                    if abs(level_resid_corr) < 0.1:
+                        st.success(f"✅ **No correlation** (r = {level_resid_corr:.3f}): Residuals are independent of {target_col} level. This is ideal.")
+                    elif abs(level_resid_corr) < 0.3:
+                        st.info(f"ℹ️ **Weak correlation** (r = {level_resid_corr:.3f}): Slight pattern exists but may not be significant.")
+                    elif level_resid_corr > 0.3:
+                        st.warning(f"⚠️ **Positive correlation** (r = {level_resid_corr:.3f}): Model under-predicts more at higher {target_col} values. Consider non-linear terms.")
+                    else:
+                        st.warning(f"⚠️ **Negative correlation** (r = {level_resid_corr:.3f}): Model over-predicts more at higher {target_col} values. Consider non-linear terms.")
+                
+                with col_right:
+                    st.markdown("**Target Move vs Move Residuals**")
+                    fig_corr2 = px.scatter(
+                        ts_delta_df,
+                        x='Actual_Move',
+                        y='Move_Residual',
+                        title=f"Correlation: {move_resid_corr:.3f}",
+                        trendline="ols",
+                        labels={'Actual_Move': f'{target_col} Actual Move', 'Move_Residual': 'Move Residual'}
+                    )
+                    fig_corr2.update_traces(marker=dict(color='#10b981', size=6, opacity=0.6))
+                    fig_corr2.add_hline(y=0, line_dash="dash", line_color="#FFC300", opacity=0.5)
+                    fig_corr2.add_vline(x=0, line_dash="dash", line_color="#FFC300", opacity=0.5)
+                    fig_corr2.update_layout(height=350)
+                    st.plotly_chart(update_chart_theme(fig_corr2), width="stretch")
+                    
+                    # Interpretation
+                    if abs(move_resid_corr) < 0.1:
+                        st.success(f"✅ **No correlation** (r = {move_resid_corr:.3f}): Move residuals are independent of move size. Model captures dynamics well.")
+                    elif abs(move_resid_corr) < 0.3:
+                        st.info(f"ℹ️ **Weak correlation** (r = {move_resid_corr:.3f}): Minor pattern in move prediction errors.")
+                    elif move_resid_corr > 0.3:
+                        st.warning(f"⚠️ **Positive correlation** (r = {move_resid_corr:.3f}): Model underestimates large positive moves. Consider momentum features.")
+                    else:
+                        st.warning(f"⚠️ **Negative correlation** (r = {move_resid_corr:.3f}): Model overestimates moves. May be too reactive to changes.")
+                
+                # Summary metrics row
+                st.markdown("")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    style1 = "success" if abs(level_resid_corr) < 0.2 else "warning"
+                    render_metric("Level Correlation", f"{level_resid_corr:.3f}", f"p = {level_resid_pval:.4f}", style1)
+                with c2:
+                    style2 = "success" if abs(move_resid_corr) < 0.2 else "warning"
+                    render_metric("Move Correlation", f"{move_resid_corr:.3f}", f"p = {move_resid_pval:.4f}", style2)
+                with c3:
+                    style3 = "success" if abs(cross_corr) < 0.2 else "warning"
+                    render_metric("Cross Correlation", f"{cross_corr:.3f}", f"Level vs Move Resid", style3)
+                
+                # Correlation Analysis Bottom Line
+                corr_issues = []
+                corr_actions = []
+                
+                if abs(level_resid_corr) >= 0.3:
+                    corr_issues.append(f"Level residuals correlated with {target_col}")
+                    if level_resid_corr > 0:
+                        corr_actions.append(f"Add squared or log terms of {target_col} as a feature")
+                    else:
+                        corr_actions.append("Consider a different functional form (log, sqrt transformation)")
+                
+                if abs(move_resid_corr) >= 0.3:
+                    corr_issues.append("Move residuals correlated with move magnitude")
+                    if move_resid_corr > 0:
+                        corr_actions.append("Add momentum or lagged features to capture large moves")
+                    else:
+                        corr_actions.append("Model may be over-reactive; consider smoothing predictors")
+                
+                if not corr_issues:
+                    st.markdown("""
+                    <div class="guide-box" style="border-color: #10b981;">
+                        <h4 style="color:#10b981; margin-top:0;">✅ Correlation Check Passed</h4>
+                        Residuals show no significant correlation with target values. This indicates:
+                        <ul>
+                            <li>The model captures the linear relationship well</li>
+                            <li>No obvious non-linear patterns are being missed</li>
+                            <li>Predictions are equally reliable across all target values</li>
+                        </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    issues_text = ", ".join(corr_issues)
+                    st.markdown(f"""
+                    <div class="guide-box" style="border-color: #f59e0b;">
+                        <h4 style="color:#f59e0b; margin-top:0;">⚠️ Correlation Issues Detected</h4>
+                        <b>Problems:</b> {issues_text}<br><br>
+                        <b>What this means:</b> The model's accuracy varies depending on the value of {target_col}. 
+                        Predictions may be less reliable in certain ranges.<br><br>
+                        <b>Recommended fixes:</b>
+                        <ul>
+                            {"".join([f"<li>{a}</li>" for a in corr_actions])}
+                        </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("---")
+                
                 # Calculate all residual statistics
                 mean_resid = ts_df_sorted['Deviation'].mean()
                 std_resid = ts_df_sorted['Deviation'].std()
