@@ -2123,19 +2123,7 @@ def main():
     else:
         # Landing page - Tabbed with Cards
         
-        # Header
-        st.markdown("""
-            <div style="text-align: center; padding: 3rem 0 2rem 0;">
-                <h1 style="color: #FFC300; font-size: 2.8rem; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: -1px;">
-                    Regression Lab Pro
-                </h1>
-                <p style="color: #888; font-size: 1.05rem; font-weight: 400;">
-                    Multi-Variable Modeling & Predictive Analytics
-                </p>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Landing page tabs
+        # Landing page tabs (no redundant header needed - main header already shows)
         landing_tab1, landing_tab2, landing_tab3 = st.tabs(["🚀 Get Started", "📊 Modules", "📖 About"])
         
         # TAB 1: GET STARTED
