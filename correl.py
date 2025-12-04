@@ -33,7 +33,7 @@ except ImportError:
 
 # --- Page Config ---
 st.set_page_config(
-    page_title="Aarambh | Regression Lab Pro",
+    page_title="Regression Lab Pro | Quant Correlate",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -753,26 +753,94 @@ def calculate_trading_metrics(actual, predicted):
 # MAIN APPLICATION
 # ============================================================================
 
+def load_google_sheet(sheet_url):
+    """Load data from a public Google Sheet."""
+    try:
+        # Extract the sheet ID and gid from the URL
+        import re
+        
+        # Extract sheet ID
+        sheet_id_match = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url)
+        if not sheet_id_match:
+            return None, "Invalid Google Sheets URL"
+        
+        sheet_id = sheet_id_match.group(1)
+        
+        # Extract gid if present
+        gid_match = re.search(r'gid=(\d+)', sheet_url)
+        gid = gid_match.group(1) if gid_match else '0'
+        
+        # Construct CSV export URL
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+        
+        df = pd.read_csv(csv_url)
+        return df, None
+    except Exception as e:
+        return None, str(e)
+
 def main():
     # Premium Header
     st.markdown("""
     <div class="premium-header">
-        <h1>Aarambh | Regression Lab <span style="color:#FFC300;">Pro</span></h1>
+        <h1>Regression Lab <span style="color:#FFC300;">Pro</span></h1>
         <div class="tagline">Advanced Multi-Variable Modeling & Predictive Analytics</div>
     </div>
     """, unsafe_allow_html=True)
 
     # --- Sidebar ---
     st.sidebar.markdown("### 📁 Data Setup")
-    uploaded_file = st.sidebar.file_uploader("Upload Data (CSV/Excel)", type=['csv', 'xlsx'])
-
-    if uploaded_file:
+    
+    # Data Source Selection
+    data_source = st.sidebar.radio(
+        "Select Data Source",
+        ["📤 Upload File", "📊 Google Sheets"],
+        horizontal=True
+    )
+    
+    df = None
+    
+    if data_source == "📤 Upload File":
+        uploaded_file = st.sidebar.file_uploader("Upload Data (CSV/Excel)", type=['csv', 'xlsx'])
+        
+        if uploaded_file:
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+            except Exception as e:
+                st.error(f"Error loading file: {e}")
+                return
+    
+    else:  # Google Sheets
+        st.sidebar.markdown("---")
+        
+        # Default Google Sheet URL
+        default_sheet_url = "https://docs.google.com/spreadsheets/d/1po7z42n3dYIQGAvn0D1-a4pmyxpnGPQ13TrNi3DB5_c/edit?gid=1738251155#gid=1738251155"
+        
+        sheet_url = st.sidebar.text_input(
+            "Google Sheet URL",
+            value=default_sheet_url,
+            help="Paste a Google Sheets URL. The sheet must be publicly accessible (Anyone with link can view)."
+        )
+        
+        if st.sidebar.button("🔄 Load Sheet", type="primary"):
+            with st.spinner("Loading Google Sheet..."):
+                df, error = load_google_sheet(sheet_url)
+                if error:
+                    st.error(f"Failed to load sheet: {error}")
+                    st.info("Make sure the sheet is set to 'Anyone with the link can view'")
+                    return
+                else:
+                    st.session_state['gsheet_data'] = df
+                    st.success("✅ Google Sheet loaded successfully!")
+        
+        # Use cached data if available
+        if 'gsheet_data' in st.session_state:
+            df = st.session_state['gsheet_data']
+    
+    if df is not None:
         try:
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-            
             all_cols = df.columns.tolist()
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             
@@ -811,12 +879,13 @@ def main():
                 return
 
             # --- TABS ---
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
                 "📊 Model Performance", 
                 "📐 Coefficients", 
                 "🛠 Diagnostics",
                 "🔍 Prediction Analysis",
                 "🌊 Delta Analysis",
+                "📉 Time Series Residuals",
                 "🔮 Simulation",
                 "⚙️ Advanced Regression",
                 "📈 Rolling Analysis",
@@ -1166,9 +1235,150 @@ def main():
                 st.plotly_chart(update_chart_theme(fig_move_resid), use_container_width=True)
 
             # ================================================================
-            # TAB 6: SIMULATION (Original + Enhanced)
+            # TAB 6: TIME SERIES RESIDUALS (NEW DEDICATED TAB)
             # ================================================================
             with tab6:
+                st.markdown("### 📉 Time Series Residuals")
+                st.markdown("""
+                <div class="guide-box">
+                    <h4 style="color:#FFC300; margin-top:0;">Residual Analysis Over Time</h4>
+                    This tab provides a dedicated view of how prediction errors evolve over time.
+                    Use these charts to identify periods where the model systematically over or under-predicts,
+                    detect regime changes, and spot anomalies.
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Prepare data for both charts
+                preds_ts = model.predict(sm.add_constant(data[feature_cols]))
+                ts_analysis_df = data.copy()
+                ts_analysis_df['Predicted'] = preds_ts
+                ts_analysis_df['Deviation'] = ts_analysis_df[target_col] - ts_analysis_df['Predicted']
+                
+                # Delta data
+                if date_col_option != "None" and date_col_option in data.columns:
+                    ts_delta_df = data.sort_values(by=date_col_option).copy()
+                else:
+                    ts_delta_df = data.sort_index().copy()
+                
+                ts_delta_df['Actual_Move'] = ts_delta_df[target_col].diff()
+                ts_delta_df['Predicted_Move'] = 0.0
+                for feat in feature_cols:
+                    coef = model.params[feat]
+                    ts_delta_df['Predicted_Move'] += ts_delta_df[feat].diff() * coef
+                ts_delta_df['Move_Residual'] = ts_delta_df['Actual_Move'] - ts_delta_df['Predicted_Move']
+                ts_delta_df = ts_delta_df.dropna()
+                
+                # ---- CHART 1: Residuals Over Time (Full Series) ----
+                st.markdown("#### 📊 Residuals Over Time (Full Series)")
+                st.caption("Shows how prediction errors (Actual - Predicted) vary across time. Persistent positive/negative values indicate systematic bias.")
+                
+                if date_col_option != "None" and date_col_option in ts_analysis_df.columns:
+                    ts_df_sorted = ts_analysis_df.sort_values(by=date_col_option)
+                    x_axis_resid = date_col_option
+                    x_title = "Date"
+                else:
+                    ts_df_sorted = ts_analysis_df.sort_index()
+                    x_axis_resid = ts_df_sorted.index
+                    x_title = "Index / Row"
+
+                fig_resid_ts = px.bar(
+                    ts_df_sorted,
+                    x=x_axis_resid,
+                    y='Deviation',
+                    title=f"Level Residuals ({target_col} Actual - Predicted) over {x_title}",
+                    color='Deviation',
+                    color_continuous_scale=['#FF4B4B', '#FFC300', '#00E396'],
+                    labels={'Deviation': 'Residual (Act - Pred)'}
+                )
+                fig_resid_ts.add_hline(y=0, line_color="#EAEAEA", line_width=1, opacity=0.5)
+                fig_resid_ts.update_traces(marker_line_width=0)
+                fig_resid_ts.update_layout(coloraxis_showscale=False, height=400)
+                st.plotly_chart(update_chart_theme(fig_resid_ts), use_container_width=True)
+                
+                # Stats for Level Residuals
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    render_metric("Mean Residual", f"{ts_df_sorted['Deviation'].mean():.4f}", "Avg Bias", "info")
+                with c2:
+                    render_metric("Std Dev", f"{ts_df_sorted['Deviation'].std():.4f}", "Volatility", "gold")
+                with c3:
+                    pos_pct = (ts_df_sorted['Deviation'] > 0).mean() * 100
+                    render_metric("% Positive", f"{pos_pct:.1f}%", "Under-predictions", "success")
+                with c4:
+                    neg_pct = (ts_df_sorted['Deviation'] < 0).mean() * 100
+                    render_metric("% Negative", f"{neg_pct:.1f}%", "Over-predictions", "danger")
+                
+                st.markdown("---")
+                
+                # ---- CHART 2: Move Residuals Over Time ----
+                st.markdown("#### 🌊 Move Residuals Over Time")
+                st.caption("Shows how well the model predicts period-over-period changes. Large bars indicate the model missed significant moves.")
+                
+                if date_col_option != "None" and date_col_option in ts_delta_df.columns:
+                    x_axis_move_ts = date_col_option
+                    x_title_move = "Date"
+                else:
+                    x_axis_move_ts = ts_delta_df.index
+                    x_title_move = "Index"
+
+                fig_move_ts = px.bar(
+                    ts_delta_df,
+                    x=x_axis_move_ts,
+                    y='Move_Residual',
+                    title=f"Move Residuals (Actual Move - Predicted Move) over {x_title_move}",
+                    color='Move_Residual',
+                    color_continuous_scale=['#FF4B4B', '#FFC300', '#00E396']
+                )
+                fig_move_ts.add_hline(y=0, line_color="#EAEAEA", opacity=0.5)
+                fig_move_ts.update_traces(marker_line_width=0)
+                fig_move_ts.update_layout(coloraxis_showscale=False, height=400)
+                st.plotly_chart(update_chart_theme(fig_move_ts), use_container_width=True)
+                
+                # Stats for Move Residuals
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    render_metric("Mean Move Error", f"{ts_delta_df['Move_Residual'].mean():.4f}", "Avg Bias", "info")
+                with c2:
+                    render_metric("Std Dev", f"{ts_delta_df['Move_Residual'].std():.4f}", "Volatility", "gold")
+                with c3:
+                    move_corr, _ = stats.pearsonr(ts_delta_df['Actual_Move'], ts_delta_df['Predicted_Move'])
+                    render_metric("Move Correlation", f"{move_corr:.4f}", "Directional", "purple")
+                with c4:
+                    hit_rate = ((ts_delta_df['Actual_Move'] * ts_delta_df['Predicted_Move']) > 0).mean() * 100
+                    render_metric("Direction Hit Rate", f"{hit_rate:.1f}%", "Sign Match", "success")
+                
+                st.markdown("---")
+                
+                # ---- Cumulative Residual Chart ----
+                st.markdown("#### 📈 Cumulative Residual (Drift Detection)")
+                st.caption("Cumulative sum of residuals. A trending line indicates persistent model bias over time.")
+                
+                ts_df_sorted['Cumulative_Residual'] = ts_df_sorted['Deviation'].cumsum()
+                
+                fig_cumul = px.line(
+                    ts_df_sorted,
+                    x=x_axis_resid,
+                    y='Cumulative_Residual',
+                    title="Cumulative Residual Over Time"
+                )
+                fig_cumul.add_hline(y=0, line_dash="dash", line_color="#FFC300", opacity=0.7)
+                fig_cumul.update_traces(line=dict(color='#06b6d4', width=2))
+                fig_cumul.update_layout(height=350)
+                st.plotly_chart(update_chart_theme(fig_cumul), use_container_width=True)
+                
+                # Drift interpretation
+                final_cumul = ts_df_sorted['Cumulative_Residual'].iloc[-1]
+                if final_cumul > ts_df_sorted['Deviation'].std() * 2:
+                    st.warning(f"⚠️ **Positive Drift Detected:** Cumulative residual is {final_cumul:.2f}. Model tends to under-predict over time.")
+                elif final_cumul < -ts_df_sorted['Deviation'].std() * 2:
+                    st.warning(f"⚠️ **Negative Drift Detected:** Cumulative residual is {final_cumul:.2f}. Model tends to over-predict over time.")
+                else:
+                    st.success(f"✅ **No Significant Drift:** Cumulative residual is {final_cumul:.2f}. Model appears unbiased over time.")
+
+            # ================================================================
+            # TAB 7: SIMULATION (Original + Enhanced)
+            # ================================================================
+            with tab7:
                 st.markdown("### 🔮 Simulation & Backtesting")
                 
                 subtab_sim, subtab_bt, subtab_wf, subtab_mc = st.tabs([
@@ -1395,9 +1605,9 @@ def main():
                                 st.error("Monte Carlo simulation failed.")
 
             # ================================================================
-            # TAB 7: ADVANCED REGRESSION TYPES (NEW)
+            # TAB 8: ADVANCED REGRESSION TYPES (NEW)
             # ================================================================
-            with tab7:
+            with tab8:
                 st.markdown("### ⚙️ Advanced Regression Types")
                 st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
                 
@@ -1522,9 +1732,9 @@ def main():
                         st.plotly_chart(update_chart_theme(fig_adv), use_container_width=True)
 
             # ================================================================
-            # TAB 8: ROLLING ANALYSIS (NEW)
+            # TAB 9: ROLLING ANALYSIS (NEW)
             # ================================================================
-            with tab8:
+            with tab9:
                 st.markdown("### 📈 Rolling Window Analysis")
                 st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
                 
@@ -1616,9 +1826,9 @@ def main():
                                 st.error("Rolling regression failed.")
 
             # ================================================================
-            # TAB 9: FEATURE ENGINEERING (NEW)
+            # TAB 10: FEATURE ENGINEERING (NEW)
             # ================================================================
-            with tab9:
+            with tab10:
                 st.markdown("### 🧪 Feature Engineering Module")
                 st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
                 
@@ -1748,9 +1958,9 @@ def main():
                                 break
 
             # ================================================================
-            # TAB 10: MODEL COMPARISON (NEW)
+            # TAB 11: MODEL COMPARISON (NEW)
             # ================================================================
-            with tab10:
+            with tab11:
                 st.markdown("### 🏆 Model Comparison Framework")
                 st.markdown('<span class="new-badge">NEW</span>', unsafe_allow_html=True)
                 
@@ -1891,11 +2101,25 @@ def main():
         # Landing page
         st.markdown("""
         <div style="text-align: center; padding: 3rem;">
-            <h2 style="color: #FFC300;">Welcome to Aarambh | Regression Lab Pro</h2>
+            <h2 style="color: #FFC300;">Welcome to Regression Lab Pro</h2>
             <p style="color: #888; font-size: 1.1rem;">
-                Upload your data to begin advanced regression analysis.
+                Upload your data or connect to Google Sheets to begin advanced regression analysis.
             </p>
-            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-top: 2rem;">
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 2rem; margin-bottom: 2rem;">
+                <div class="metric-card" style="border-color: #FFC300;">
+                    <h4>📤 UPLOAD FILE</h4>
+                    <p style="font-size:0.85rem; color:#888;">CSV or Excel files from your computer</p>
+                </div>
+                <div class="metric-card" style="border-color: #10b981;">
+                    <h4>📊 GOOGLE SHEETS</h4>
+                    <p style="font-size:0.85rem; color:#888;">Connect directly to your Google Sheets data</p>
+                </div>
+                <div class="metric-card" style="border-color: #06b6d4;">
+                    <h4>📉 TIME SERIES</h4>
+                    <p style="font-size:0.85rem; color:#888;">Dedicated residual analysis over time</p>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 1rem; margin-top: 1rem;">
                 <div class="metric-card">
                     <h4>ADVANCED MODELS</h4>
                     <p style="font-size:0.85rem; color:#888;">Ridge, Lasso, Elastic Net, Huber, RANSAC, Quantile</p>
@@ -1923,7 +2147,7 @@ def main():
     # --- Footer ---
     st.markdown(f"""
     <div class="app-footer">
-        <p>© {datetime.now().year} Aarambh | Regression Lab Pro | Arthagati Analytics Suite. All data is for informational purposes only.</p>
+        <p>© {datetime.now().year} Regression Lab Pro | Arthagati Analytics Suite. All data is for informational purposes only.</p>
     </div>
     """, unsafe_allow_html=True)
 
