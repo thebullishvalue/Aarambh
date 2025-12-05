@@ -1684,9 +1684,15 @@ def main():
                     st.markdown("")
                     st.markdown(f"**Prediction Accuracy:** On average, predictions are off by ±{rmse:.4f} units of {target_col}")
                     
-                    # Identify significant vs insignificant features
-                    sig_feats = [f for f in feature_cols if model.pvalues[f] < 0.05]
-                    insig_feats = [f for f in feature_cols if model.pvalues[f] >= 0.05]
+                    # Identify significant vs insignificant features using OLS p-values
+                    ols_result = basket_results.get('OLS', {})
+                    if 'error' not in ols_result and 'model' in ols_result:
+                        ols_pvals = ols_result['model'].pvalues
+                        sig_feats = [f for f in feature_cols if f in ols_pvals.index and ols_pvals[f] < 0.05]
+                        insig_feats = [f for f in feature_cols if f in ols_pvals.index and ols_pvals[f] >= 0.05]
+                    else:
+                        sig_feats = feature_cols  # Assume all significant if no OLS
+                        insig_feats = []
                     
                     if sig_feats:
                         st.markdown(f"**✅ Significant predictors:** {', '.join(sig_feats)}")
