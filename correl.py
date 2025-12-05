@@ -614,18 +614,43 @@ def apply_transformations(data, target, features, transforms):
     Apply selected transformations to the data and return new feature list.
     
     transforms: dict with keys:
+        - 'target': 'log', 'square_root', or 'squared' - transform target variable
         - 'log': list of features to log transform
         - 'squared': list of features to square
         - 'lag_1': list of features to lag by 1
         - 'lag_2': list of features to lag by 2
         - 'diff': list of features to difference
         - 'interactions': list of feature pairs to interact
-        - 'target_squared': bool - add target² as feature
-        - 'target_log': bool - add log(target) as feature
+    
+    Returns: (data, new_features, new_target_col, target_was_transformed)
     """
     result = data.copy()
     new_features = list(features)
+    new_target = target
+    target_transformed = False
     
+    # TARGET TRANSFORMATIONS
+    if transforms.get('target'):
+        t_type = transforms['target']
+        if t_type == 'log':
+            new_col = f"log_{target}"
+            # Handle negative values with sign preservation
+            result[new_col] = np.sign(result[target]) * np.log1p(np.abs(result[target]))
+            new_target = new_col
+            target_transformed = True
+        elif t_type == 'square_root':
+            new_col = f"sqrt_{target}"
+            # Handle negative values
+            result[new_col] = np.sign(result[target]) * np.sqrt(np.abs(result[target]))
+            new_target = new_col
+            target_transformed = True
+        elif t_type == 'squared':
+            new_col = f"{target}_sq"
+            result[new_col] = result[target] ** 2
+            new_target = new_col
+            target_transformed = True
+    
+    # FEATURE TRANSFORMATIONS
     # Log transformations
     if transforms.get('log'):
         for col in transforms['log']:
@@ -675,21 +700,31 @@ def apply_transformations(data, target, features, transforms):
                 result[new_col] = result[col1] * result[col2]
                 new_features.append(new_col)
     
-    # Target squared (for non-linear target relationship)
-    if transforms.get('target_squared') and target in result.columns:
-        new_col = f"{target}_sq"
-        result[new_col] = result[target] ** 2
-        # Note: Don't add to features, this is for detecting non-linearity
-    
-    # Target log
-    if transforms.get('target_log') and target in result.columns:
-        new_col = f"{target}_log"
-        result[new_col] = np.sign(result[target]) * np.log1p(np.abs(result[target]))
-    
     # Drop rows with NaN from lag/diff operations
     result = result.dropna()
     
-    return result, new_features
+    return result, new_features, new_target, target_transformed
+
+
+def back_transform_predictions(predictions, transform_type, original_values=None):
+    """
+    Back-transform predictions to original scale.
+    
+    transform_type: 'log', 'square_root', or 'squared'
+    """
+    if transform_type == 'log':
+        # Inverse of sign(x) * log1p(|x|) is sign(x) * (exp(|x|) - 1)
+        return np.sign(predictions) * (np.expm1(np.abs(predictions)))
+    elif transform_type == 'square_root':
+        # Inverse of sign(x) * sqrt(|x|) is sign(x) * x²
+        return np.sign(predictions) * (predictions ** 2)
+    elif transform_type == 'squared':
+        # Inverse of x² is sqrt(x), but we lose sign info
+        # Use original values to determine sign if available
+        return np.sqrt(np.abs(predictions))
+    else:
+        return predictions
+
 
 def get_transformation_summary(transforms, features):
     """Generate a human-readable summary of applied transformations."""
@@ -1272,40 +1307,54 @@ def main():
             # FEATURE TRANSFORMATIONS SECTION
             # ============================================================
             st.sidebar.markdown("---")
-            st.sidebar.markdown("### 🔧 Feature Transformations")
+            st.sidebar.markdown("### 🔧 Transformations")
             
             with st.sidebar.expander("Add Transformations", expanded=False):
-                st.caption("Enhance your model with engineered features")
-                
                 transforms = {}
+                
+                # TARGET TRANSFORMATIONS
+                st.markdown("**🎯 Target Variable**")
+                st.caption(f"Transform {target_col} (predictions will be back-transformed)")
+                
+                target_transform = st.selectbox(
+                    "Transform target:",
+                    ["None", "Log", "Square Root", "Squared"],
+                    key="target_transform",
+                    help="Log: for right-skewed data, multiplicative relationships. √: for count data. ²: rare, inverse relationships."
+                )
+                if target_transform != "None":
+                    transforms['target'] = target_transform.lower().replace(" ", "_")
+                
+                st.markdown("---")
+                
+                # FEATURE TRANSFORMATIONS
+                st.markdown("**📊 Feature Variables**")
+                st.caption("Enhance predictors with engineered features")
                 
                 # Log transformations
                 st.markdown("**📐 Log Transform**")
-                st.caption("Compresses large values, handles exponential relationships")
                 log_features = st.multiselect(
                     "Apply log to:",
                     feature_cols,
                     key="log_transform",
-                    help="Good for features with exponential growth or wide range"
+                    help="Compresses large values, handles exponential relationships"
                 )
                 if log_features:
                     transforms['log'] = log_features
                 
                 # Squared transformations
                 st.markdown("**📈 Squared Terms**")
-                st.caption("Captures non-linear (U-shaped) relationships")
                 squared_features = st.multiselect(
                     "Apply squared to:",
                     feature_cols,
                     key="squared_transform",
-                    help="Good when relationship changes direction"
+                    help="Captures non-linear (U-shaped) relationships"
                 )
                 if squared_features:
                     transforms['squared'] = squared_features
                 
                 # Lag transformations
                 st.markdown("**⏪ Lagged Values**")
-                st.caption("Use previous period values as predictors")
                 lag1_features = st.multiselect(
                     "Lag by 1 period:",
                     feature_cols,
@@ -1326,12 +1375,11 @@ def main():
                 
                 # Momentum/Difference
                 st.markdown("**🔄 Momentum (Diff)**")
-                st.caption("Change from previous period")
                 diff_features = st.multiselect(
                     "Calculate change in:",
                     feature_cols,
                     key="diff_transform",
-                    help="Captures rate of change / momentum"
+                    help="Change from previous period - captures rate of change"
                 )
                 if diff_features:
                     transforms['diff'] = diff_features
@@ -1339,7 +1387,6 @@ def main():
                 # Interaction terms
                 if len(feature_cols) >= 2:
                     st.markdown("**✖️ Interactions**")
-                    st.caption("Multiply two features together")
                     
                     # Create pairs
                     interaction_options = []
@@ -1351,7 +1398,7 @@ def main():
                         "Create interactions:",
                         interaction_options,
                         key="interaction_transform",
-                        help="Captures combined effects"
+                        help="Multiply features together - captures combined effects"
                     )
                     
                     if selected_interactions:
@@ -1363,15 +1410,24 @@ def main():
             # Apply transformations if any selected
             data = clean_data(df, target_col, feature_cols, date_col_option)
             
+            # Track original target for back-transformation
+            original_target_col = target_col
+            target_transformed = False
+            
             if transforms:
                 original_rows = len(data)
-                data, feature_cols = apply_transformations(data, target_col, feature_cols, transforms)
+                data, feature_cols, target_col, target_transformed = apply_transformations(data, target_col, feature_cols, transforms)
                 new_rows = len(data)
                 
                 # Show transformation summary
                 transform_summary = get_transformation_summary(transforms, feature_cols)
-                if transform_summary:
+                if transform_summary or target_transformed:
                     st.sidebar.markdown("**Applied:**")
+                    
+                    if target_transformed:
+                        t_type = transforms.get('target', '').replace('_', ' ').title()
+                        st.sidebar.markdown(f"<small>🎯 Target: {t_type}({original_target_col})</small>", unsafe_allow_html=True)
+                    
                     for item in transform_summary:
                         st.sidebar.markdown(f"<small>{item}</small>", unsafe_allow_html=True)
                     
@@ -1567,6 +1623,22 @@ def main():
                     equation_str += f" {sign} ({abs(coef):.4f} × {feat})"
                 
                 st.markdown(f'<div class="equation-box">{equation_str}</div>', unsafe_allow_html=True)
+                
+                # Note about target transformation
+                if target_transformed:
+                    t_type = transforms.get('target', '').replace('_', ' ').title()
+                    st.markdown(f"""
+                    <div style="background: rgba(6, 182, 212, 0.1); border: 1px solid #06b6d4; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+                        <b style="color: #06b6d4;">📐 Target Transformation Applied</b>
+                        <p style="margin: 0.5rem 0 0 0; color: #EAEAEA;">
+                            The model predicts <b>{target_col}</b> ({t_type} of {original_target_col}).<br>
+                            To get predictions in original units, apply the inverse transformation:<br>
+                            {'• exp(prediction) - 1 for Log transform' if 'log' in target_col.lower() else ''}
+                            {'• prediction² for Square Root transform' if 'sqrt' in target_col.lower() else ''}
+                            {'• √prediction for Squared transform' if '_sq' in target_col.lower() and 'sqrt' not in target_col.lower() else ''}
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 st.markdown(f"#### Model Coefficients ({selected_model_name})")
                 
