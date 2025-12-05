@@ -605,6 +605,112 @@ def clean_data(df, target, features, date_col=None):
             
     return data
 
+# ============================================================================
+# FEATURE TRANSFORMATIONS
+# ============================================================================
+
+def apply_transformations(data, target, features, transforms):
+    """
+    Apply selected transformations to the data and return new feature list.
+    
+    transforms: dict with keys:
+        - 'log': list of features to log transform
+        - 'squared': list of features to square
+        - 'lag_1': list of features to lag by 1
+        - 'lag_2': list of features to lag by 2
+        - 'diff': list of features to difference
+        - 'interactions': list of feature pairs to interact
+        - 'target_squared': bool - add target² as feature
+        - 'target_log': bool - add log(target) as feature
+    """
+    result = data.copy()
+    new_features = list(features)
+    
+    # Log transformations
+    if transforms.get('log'):
+        for col in transforms['log']:
+            if col in result.columns:
+                # Handle negative values with sign preservation
+                new_col = f"{col}_log"
+                result[new_col] = np.sign(result[col]) * np.log1p(np.abs(result[col]))
+                new_features.append(new_col)
+    
+    # Squared transformations
+    if transforms.get('squared'):
+        for col in transforms['squared']:
+            if col in result.columns:
+                new_col = f"{col}_sq"
+                result[new_col] = result[col] ** 2
+                new_features.append(new_col)
+    
+    # Lag 1 transformations
+    if transforms.get('lag_1'):
+        for col in transforms['lag_1']:
+            if col in result.columns:
+                new_col = f"{col}_lag1"
+                result[new_col] = result[col].shift(1)
+                new_features.append(new_col)
+    
+    # Lag 2 transformations
+    if transforms.get('lag_2'):
+        for col in transforms['lag_2']:
+            if col in result.columns:
+                new_col = f"{col}_lag2"
+                result[new_col] = result[col].shift(2)
+                new_features.append(new_col)
+    
+    # Difference transformations (momentum)
+    if transforms.get('diff'):
+        for col in transforms['diff']:
+            if col in result.columns:
+                new_col = f"{col}_diff"
+                result[new_col] = result[col].diff()
+                new_features.append(new_col)
+    
+    # Interaction terms
+    if transforms.get('interactions'):
+        for col1, col2 in transforms['interactions']:
+            if col1 in result.columns and col2 in result.columns:
+                new_col = f"{col1}_x_{col2}"
+                result[new_col] = result[col1] * result[col2]
+                new_features.append(new_col)
+    
+    # Target squared (for non-linear target relationship)
+    if transforms.get('target_squared') and target in result.columns:
+        new_col = f"{target}_sq"
+        result[new_col] = result[target] ** 2
+        # Note: Don't add to features, this is for detecting non-linearity
+    
+    # Target log
+    if transforms.get('target_log') and target in result.columns:
+        new_col = f"{target}_log"
+        result[new_col] = np.sign(result[target]) * np.log1p(np.abs(result[target]))
+    
+    # Drop rows with NaN from lag/diff operations
+    result = result.dropna()
+    
+    return result, new_features
+
+def get_transformation_summary(transforms, features):
+    """Generate a human-readable summary of applied transformations."""
+    summary = []
+    
+    if transforms.get('log'):
+        summary.append(f"📐 Log: {', '.join(transforms['log'])}")
+    if transforms.get('squared'):
+        summary.append(f"📈 Squared: {', '.join(transforms['squared'])}")
+    if transforms.get('lag_1'):
+        summary.append(f"⏪ Lag-1: {', '.join(transforms['lag_1'])}")
+    if transforms.get('lag_2'):
+        summary.append(f"⏪ Lag-2: {', '.join(transforms['lag_2'])}")
+    if transforms.get('diff'):
+        summary.append(f"🔄 Momentum: {', '.join(transforms['diff'])}")
+    if transforms.get('interactions'):
+        pairs = [f"{a}×{b}" for a, b in transforms['interactions']]
+        summary.append(f"✖️ Interactions: {', '.join(pairs)}")
+    
+    return summary
+
 def run_regression(data, target, features):
     """Runs OLS regression on multiple features."""
     if not STATSMODELS_AVAILABLE:
@@ -1162,7 +1268,118 @@ def main():
                 st.info("👈 Select at least one predictor variable to begin.")
                 return
 
+            # ============================================================
+            # FEATURE TRANSFORMATIONS SECTION
+            # ============================================================
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("### 🔧 Feature Transformations")
+            
+            with st.sidebar.expander("Add Transformations", expanded=False):
+                st.caption("Enhance your model with engineered features")
+                
+                transforms = {}
+                
+                # Log transformations
+                st.markdown("**📐 Log Transform**")
+                st.caption("Compresses large values, handles exponential relationships")
+                log_features = st.multiselect(
+                    "Apply log to:",
+                    feature_cols,
+                    key="log_transform",
+                    help="Good for features with exponential growth or wide range"
+                )
+                if log_features:
+                    transforms['log'] = log_features
+                
+                # Squared transformations
+                st.markdown("**📈 Squared Terms**")
+                st.caption("Captures non-linear (U-shaped) relationships")
+                squared_features = st.multiselect(
+                    "Apply squared to:",
+                    feature_cols,
+                    key="squared_transform",
+                    help="Good when relationship changes direction"
+                )
+                if squared_features:
+                    transforms['squared'] = squared_features
+                
+                # Lag transformations
+                st.markdown("**⏪ Lagged Values**")
+                st.caption("Use previous period values as predictors")
+                lag1_features = st.multiselect(
+                    "Lag by 1 period:",
+                    feature_cols,
+                    key="lag1_transform",
+                    help="Previous period value"
+                )
+                if lag1_features:
+                    transforms['lag_1'] = lag1_features
+                
+                lag2_features = st.multiselect(
+                    "Lag by 2 periods:",
+                    feature_cols,
+                    key="lag2_transform",
+                    help="Two periods ago"
+                )
+                if lag2_features:
+                    transforms['lag_2'] = lag2_features
+                
+                # Momentum/Difference
+                st.markdown("**🔄 Momentum (Diff)**")
+                st.caption("Change from previous period")
+                diff_features = st.multiselect(
+                    "Calculate change in:",
+                    feature_cols,
+                    key="diff_transform",
+                    help="Captures rate of change / momentum"
+                )
+                if diff_features:
+                    transforms['diff'] = diff_features
+                
+                # Interaction terms
+                if len(feature_cols) >= 2:
+                    st.markdown("**✖️ Interactions**")
+                    st.caption("Multiply two features together")
+                    
+                    # Create pairs
+                    interaction_options = []
+                    for i, f1 in enumerate(feature_cols):
+                        for f2 in feature_cols[i+1:]:
+                            interaction_options.append(f"{f1} × {f2}")
+                    
+                    selected_interactions = st.multiselect(
+                        "Create interactions:",
+                        interaction_options,
+                        key="interaction_transform",
+                        help="Captures combined effects"
+                    )
+                    
+                    if selected_interactions:
+                        transforms['interactions'] = []
+                        for inter in selected_interactions:
+                            parts = inter.split(" × ")
+                            transforms['interactions'].append((parts[0], parts[1]))
+            
+            # Apply transformations if any selected
             data = clean_data(df, target_col, feature_cols, date_col_option)
+            
+            if transforms:
+                original_rows = len(data)
+                data, feature_cols = apply_transformations(data, target_col, feature_cols, transforms)
+                new_rows = len(data)
+                
+                # Show transformation summary
+                transform_summary = get_transformation_summary(transforms, feature_cols)
+                if transform_summary:
+                    st.sidebar.markdown("**Applied:**")
+                    for item in transform_summary:
+                        st.sidebar.markdown(f"<small>{item}</small>", unsafe_allow_html=True)
+                    
+                    if new_rows < original_rows:
+                        st.sidebar.caption(f"ℹ️ {original_rows - new_rows} rows dropped (lag/diff)")
+                    
+                    st.sidebar.markdown(f"<small>📊 {len(feature_cols)} total features</small>", unsafe_allow_html=True)
+            
             if len(data) < 5:
                 st.error("Not enough clean data points for regression (>5 needed).")
                 return
@@ -2310,6 +2527,40 @@ def main():
                     corr_type = "danger"
                 
                 render_bottom_line("Bottom Line: Correlation Health", corr_verdict, corr_explain, corr_next, corr_type)
+                
+                # Suggested transformations based on detected issues
+                if total_corr_issues > 0:
+                    st.markdown("#### 💡 Suggested Transformations")
+                    st.markdown("""
+                    <div class="guide-box" style="border-color: #06b6d4;">
+                        <p style="margin: 0 0 0.75rem 0; color: #EAEAEA;">
+                            Based on the correlation patterns detected, try these transformations in the <b>sidebar → Feature Transformations</b>:
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    suggested = []
+                    
+                    if level_corr_abs >= 0.3:
+                        if level_resid_corr > 0:
+                            suggested.append(("📈 Squared Terms", "Add squared versions of your top predictors to capture diminishing/accelerating effects"))
+                        else:
+                            suggested.append(("📐 Log Transform", "Apply log to features with wide ranges to compress their impact"))
+                    
+                    if move_corr_abs >= 0.3:
+                        suggested.append(("🔄 Momentum (Diff)", "Add momentum features to capture rate-of-change effects"))
+                        suggested.append(("⏪ Lagged Values", "Add lag-1 or lag-2 to capture delayed responses"))
+                    
+                    if cross_corr_abs >= 0.3:
+                        suggested.append(("✖️ Interactions", "Create interaction terms between your strongest predictors"))
+                    
+                    for title, desc in suggested:
+                        st.markdown(f"""
+                        <div style="background: rgba(6, 182, 212, 0.1); border-left: 3px solid #06b6d4; padding: 0.75rem; margin: 0.5rem 0; border-radius: 4px;">
+                            <b style="color: #06b6d4;">{title}</b>
+                            <p style="margin: 0.25rem 0 0 0; color: #AAAAAA; font-size: 0.9rem;">{desc}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
                 
                 st.markdown("---")
                 
