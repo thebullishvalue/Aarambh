@@ -630,7 +630,8 @@ def run_regression_basket(data, target, features):
     
     # 1. OLS (Baseline)
     try:
-        X_ols = sm.add_constant(X)
+        # Use DataFrame to preserve column names for pvalues index
+        X_ols = sm.add_constant(data[features])
         ols_model = sm.OLS(y, X_ols).fit()
         ols_preds = ols_model.predict(X_ols)
         ols_rmse = np.sqrt(mean_squared_error(y, ols_preds))
@@ -835,7 +836,7 @@ def run_regression_basket(data, target, features):
     
     # 7. Quantile Regression (median)
     try:
-        X_quant = sm.add_constant(X)
+        X_quant = sm.add_constant(data[features])
         quant_model = QuantReg(y, X_quant).fit(q=0.5)
         quant_preds = quant_model.predict(X_quant)
         quant_rmse = np.sqrt(mean_squared_error(y, quant_preds))
@@ -1318,9 +1319,10 @@ def main():
                     # Identify significant vs insignificant features using OLS p-values
                     ols_result = basket_results.get('OLS', {})
                     if 'error' not in ols_result and 'model' in ols_result:
-                        ols_pvals = ols_result['model'].pvalues
-                        sig_feats = [f for f in feature_cols if f in ols_pvals.index and ols_pvals[f] < 0.05]
-                        insig_feats = [f for f in feature_cols if f in ols_pvals.index and ols_pvals[f] >= 0.05]
+                        ols_model = ols_result['model']
+                        # pvalues is a pandas Series with feature names as index
+                        sig_feats = [f for f in feature_cols if f in ols_model.pvalues.index and ols_model.pvalues[f] < 0.05]
+                        insig_feats = [f for f in feature_cols if f in ols_model.pvalues.index and ols_model.pvalues[f] >= 0.05]
                     else:
                         sig_feats = feature_cols  # Assume all significant if no OLS
                         insig_feats = []
