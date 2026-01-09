@@ -920,7 +920,8 @@ def main():
                 if 'osc_cache' in st.session_state:
                     del st.session_state.osc_cache
                 st.session_state['data'] = df
-                st.success("✅ Loaded!")
+                # Use toast for ephemeral notification
+                st.toast("Loaded!", icon="✅")
         if 'data' in st.session_state:
             df = st.session_state['data']
     
@@ -1294,7 +1295,7 @@ def main():
                 'Sell Count': p['sell_count'],
             })
         
-        st.dataframe(pd.DataFrame(perf_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(perf_data), width='stretch', hide_index=True)
     
     # ═══════════════════════════════════════════════════════════════════════
     # TAB 4: REGIME ANALYSIS
@@ -1356,7 +1357,7 @@ def main():
                     f"{regime_stats['strongly_overbought']/len(ts)*100:.1f}%"
                 ]
             }
-            st.dataframe(pd.DataFrame(regime_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(regime_data), width='stretch', hide_index=True)
         
         with col2:
             st.markdown("##### Current Regime Analysis")
@@ -1399,7 +1400,7 @@ def main():
         display_ts.columns = ['Date', 'Actual', 'Fair Value', 'Residual', 'Avg Z', 'Oversold %', 'Overbought %',
                              'Conviction', 'Regime', 'Bull Div', 'Bear Div']
         
-        st.dataframe(display_ts, use_container_width=True, hide_index=True, height=500)
+        st.dataframe(display_ts, width='stretch', hide_index=True, height=500)
         
         csv_data = ts.to_csv(index=False).encode('utf-8')
         st.download_button("📥 Download Full CSV", csv_data, f"aarambh_{target_col}_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
