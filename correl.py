@@ -1001,7 +1001,7 @@ def main():
     # Adjusted layout: Removed Observations, gave more space to Signal & Regime
     # Old: c1-c6 (equal)
     # New: 5 cols with weighted distribution
-    c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1.5, 1.5])
+    c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
     
     with c1:
         os_color = "success" if signal['oversold_breadth'] > 60 else "neutral"
