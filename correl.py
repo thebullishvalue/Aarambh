@@ -989,7 +989,7 @@ def main():
         # Show header on landing page
         st.markdown("""
         <div class="premium-header">
-            <h1>AARAMBH : Fair Value Breadth</h1>
+            <h1>AARAMBH | Fair Value Breadth</h1>
             <div class="tagline">Multi-Timeframe Valuation Analysis for Market Reversals</div>
         </div>
         """, unsafe_allow_html=True)
