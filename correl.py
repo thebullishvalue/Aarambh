@@ -877,7 +877,7 @@ def render_landing_page():
             <h4 style='color: var(--text-primary); margin-bottom: 0.5rem;'>The Elastic (Valuation Gap)</h4>
             <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.7;'>
                 The distance between Price and Value stretches like a rubber band. 
-                We measure this tension. Extreme tension (±2σ) across multiple timeframes signals where reversals BEGIN.
+                We measure this tension. Extreme tension (±2σ) across multiple timeframes signals pivot.
             </p>
         </div>
         """, unsafe_allow_html=True)
