@@ -1,14 +1,14 @@
-# AARAMBH (आरंभ) - Residual Oscillator System
+# AARAMBH (आरंभ) - Fair Value Breadth
 
 **A Hemrek Capital Product**
 
-Multi-lookback breadth analysis for market top/bottom detection using fair value modeling and mean-reverting residual oscillators.
+Multi-timeframe valuation analysis for market reversals. Identifies where market turns BEGIN using ensemble fair value modeling and breadth conviction scoring.
 
 ## Features
 
 - **Fair Value Engine**: Ensemble regression (Ridge, Huber, OLS) for theoretical fair value calculation
-- **Residual Oscillator**: Mean-reverting signal from price-value deviation
-- **Multi-Lookback Breadth**: 5 timeframes (5D, 10D, 20D, 50D, 100D) for conviction scoring
+- **Valuation Gap Analysis**: Measures premium/discount between actual price and fair value
+- **Multi-Timeframe Breadth**: 5 lookback periods (5D, 10D, 20D, 50D, 100D) for conviction scoring
 - **Regime Detection**: Automatic oversold/overbought regime identification
 - **Divergence Analysis**: Bullish and bearish divergence detection
 
@@ -35,7 +35,7 @@ streamlit run app.py
 1. Load data via CSV upload or Google Sheets URL
 2. Select target variable (e.g., NIFTY50_PE)
 3. Select predictor variables (macro factors)
-4. View multi-lookback analysis across all tabs
+4. View multi-timeframe valuation analysis across all tabs
 
 ## Version
 
