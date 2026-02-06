@@ -1009,7 +1009,7 @@ def main():
         st.markdown('<div class="sidebar-title">🎯 Model Configuration</div>', unsafe_allow_html=True)
         
         default_target = "NIFTY50_PE" if "NIFTY50_PE" in numeric_cols else numeric_cols[0]
-        default_preds = ["AD_RATIO", "COUNT", "IN10Y", "IN02Y", "IN30Y", "INIRYY", "REPO", "CRR", "US02Y", "US10Y", "US30Y", "US_FED", "NIFTY50_DY", "NIFTY50_PB"]
+        default_preds = ["AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH", "IN10Y", "IN02Y", "IN30Y", "INIRYY", "REPO", "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB"]
         
         target_col = st.selectbox("Target Variable", numeric_cols, 
                                            index=numeric_cols.index(default_target) if default_target in numeric_cols else 0)
