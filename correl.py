@@ -1,8 +1,19 @@
+# -*- coding: utf-8 -*-
 """
-AARAMBH (आरंभ) - Fair Value Breadth | A Hemrek Capital Product
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Multi-timeframe valuation analysis for market reversals.
-Ensemble fair value modeling with breadth conviction scoring.
+AARAMBH (आरंभ) v2.0 - Fair Value Breadth | A Hemrek Capital Product
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Walk-Forward Valuation · OU Mean-Reversion · Kalman-Filtered Conviction
+Multi-timeframe breadth analysis for market reversals.
+
+v2.0 Changes from v1.1:
+  1. Walk-forward (expanding window) regression — no look-ahead bias
+  2. OU estimation on residuals — half-life, forward projection
+  3. Kalman smoothing on conviction — adaptive noise filtering + confidence bands
+  4. Model disagreement metric — ensemble uncertainty quantification
+  5. Residual Hurst exponent — empirical mean-reversion validation
+  6. Apply button for predictors — staging → commit pattern
+  7. Data staleness warning
+  8. Improved divergence detection — swing-based, not point-to-point
 """
 
 import streamlit as st
@@ -13,11 +24,14 @@ from plotly.subplots import make_subplots
 from scipy import stats
 from scipy.signal import argrelextrema
 from datetime import datetime, timedelta
+import logging
 import warnings
+import time
 
 warnings.filterwarnings('ignore')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- Dependencies ---
+# ── Dependencies ────────────────────────────────────────────────────────────
 try:
     import statsmodels.api as sm
     STATSMODELS_AVAILABLE = True
@@ -33,12 +47,12 @@ try:
 except ImportError:
     SKLEARN_AVAILABLE = False
 
-# --- Constants ---
-VERSION = "v1.1.0"
+# ── Constants ───────────────────────────────────────────────────────────────
+VERSION = "v2.0.0"
 PRODUCT_NAME = "Aarambh"
 COMPANY = "Hemrek Capital"
 
-# --- Page Config ---
+# ── Page Config ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="AARAMBH | Fair Value Breadth",
     page_icon="📊",
@@ -46,7 +60,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- Premium CSS (Nirnay Design System) ---
+# ══════════════════════════════════════════════════════════════════════════════
+# CSS (Hemrek Design System — shared with Arthagati, Nirnay, Pragyam)
+# ══════════════════════════════════════════════════════════════════════════════
+
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
@@ -77,108 +94,50 @@ st.markdown("""
     #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     .block-container { padding-top: 3.5rem; max-width: 90%; padding-left: 2rem; padding-right: 2rem; }
     
-    /* Sidebar toggle button - always visible */
     [data-testid="collapsedControl"] {
-        display: flex !important;
-        visibility: visible !important;
-        opacity: 1 !important;
+        display: flex !important; visibility: visible !important; opacity: 1 !important;
         background-color: var(--secondary-background-color) !important;
-        border: 2px solid var(--primary-color) !important;
-        border-radius: 8px !important;
-        padding: 10px !important;
-        margin: 12px !important;
+        border: 2px solid var(--primary-color) !important; border-radius: 8px !important;
+        padding: 10px !important; margin: 12px !important;
         box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.4) !important;
-        z-index: 999999 !important;
-        position: fixed !important;
-        top: 14px !important;
-        left: 14px !important;
-        width: 40px !important;
-        height: 40px !important;
-        align-items: center !important;
-        justify-content: center !important;
+        z-index: 999999 !important; position: fixed !important;
+        top: 14px !important; left: 14px !important;
+        width: 40px !important; height: 40px !important;
+        align-items: center !important; justify-content: center !important;
     }
-    
     [data-testid="collapsedControl"]:hover {
         background-color: rgba(var(--primary-rgb), 0.2) !important;
-        box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.6) !important;
-        transform: scale(1.05);
+        box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.6) !important; transform: scale(1.05);
     }
-    
-    [data-testid="collapsedControl"] svg {
-        stroke: var(--primary-color) !important;
-        width: 20px !important;
-        height: 20px !important;
-    }
-    
-    [data-testid="stSidebar"] button[kind="header"] {
-        background-color: transparent !important;
-        border: none !important;
-    }
-    
-    [data-testid="stSidebar"] button[kind="header"] svg {
-        stroke: var(--primary-color) !important;
-    }
-    
-    button[kind="header"] {
-        z-index: 999999 !important;
-    }
+    [data-testid="collapsedControl"] svg { stroke: var(--primary-color) !important; width: 20px !important; height: 20px !important; }
+    [data-testid="stSidebar"] button[kind="header"] { background-color: transparent !important; border: none !important; }
+    [data-testid="stSidebar"] button[kind="header"] svg { stroke: var(--primary-color) !important; }
+    button[kind="header"] { z-index: 999999 !important; }
     
     .premium-header {
-        background: var(--secondary-background-color);
-        padding: 1.25rem 2rem;
-        border-radius: 16px;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.1);
-        border: 1px solid var(--border-color);
-        position: relative;
-        overflow: hidden;
-        margin-top: 1rem;
+        background: var(--secondary-background-color); padding: 1.25rem 2rem; border-radius: 16px;
+        margin-bottom: 1.5rem; box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.1);
+        border: 1px solid var(--border-color); position: relative; overflow: hidden; margin-top: 1rem;
     }
-    
     .premium-header::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0; bottom: 0;
+        content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
         background: radial-gradient(circle at 20% 50%, rgba(var(--primary-rgb),0.08) 0%, transparent 50%);
         pointer-events: none;
     }
-    
     .premium-header h1 { margin: 0; font-size: 2rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.50px; position: relative; }
     .premium-header .tagline { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem; font-weight: 400; position: relative; }
     
     .metric-card {
-        background-color: var(--bg-card);
-        padding: 1.25rem;
-        border-radius: 12px;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
-        margin-bottom: 0.5rem;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        position: relative;
-        overflow: hidden;
-        min-height: 160px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
+        background-color: var(--bg-card); padding: 1.25rem; border-radius: 12px;
+        border: 1px solid var(--border-color); box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
+        margin-bottom: 0.5rem; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative; overflow: hidden; min-height: 160px;
+        display: flex; flex-direction: column; justify-content: center;
     }
-    
     .metric-card:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,0,0,0.3); border-color: var(--border-light); }
-    
-    .metric-card h4 { 
-        color: var(--text-muted); 
-        font-size: 0.75rem; 
-        margin-bottom: 0.5rem; 
-        font-weight: 600; 
-        text-transform: uppercase; 
-        letter-spacing: 1px;
-        min-height: 30px;
-        display: flex;
-        align-items: center;
-    }
-    
+    .metric-card h4 { color: var(--text-muted); font-size: 0.75rem; margin-bottom: 0.5rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; min-height: 30px; display: flex; align-items: center; }
     .metric-card h3 { color: var(--text-primary); font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem; }
     .metric-card p { color: var(--text-muted); font-size: 0.85rem; line-height: 1.5; margin: 0; }
-    
     .metric-card h2 { color: var(--text-primary); font-size: 1.75rem; font-weight: 700; margin: 0; line-height: 1; }
     .metric-card .sub-metric { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; font-weight: 500; }
     .metric-card.primary h2 { color: var(--primary-color); }
@@ -189,19 +148,10 @@ st.markdown("""
     .metric-card.purple h2 { color: var(--purple); }
     .metric-card.neutral h2 { color: var(--neutral); }
 
-    .signal-card {
-        background: var(--bg-card);
-        border-radius: 16px;
-        border: 2px solid var(--border-color);
-        padding: 1.5rem;
-        position: relative;
-        overflow: hidden;
-    }
-    
+    .signal-card { background: var(--bg-card); border-radius: 16px; border: 2px solid var(--border-color); padding: 1.5rem; position: relative; overflow: hidden; }
     .signal-card.overvalued { border-color: var(--danger-red); box-shadow: 0 0 30px rgba(239, 68, 68, 0.15); }
     .signal-card.undervalued { border-color: var(--success-green); box-shadow: 0 0 30px rgba(16, 185, 129, 0.15); }
     .signal-card.fair { border-color: var(--primary-color); box-shadow: 0 0 30px rgba(255, 195, 0, 0.15); }
-    
     .signal-card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-muted); font-weight: 600; margin-bottom: 0.5rem; }
     .signal-card .value { font-size: 2.5rem; font-weight: 700; line-height: 1; }
     .signal-card .subtext { font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.75rem; }
@@ -209,205 +159,313 @@ st.markdown("""
     .signal-card.undervalued .value { color: var(--success-green); }
     .signal-card.fair .value { color: var(--primary-color); }
 
-    .guide-box {
-        background: rgba(var(--primary-rgb), 0.05);
-        border-left: 3px solid var(--primary-color);
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-        color: var(--text-secondary);
-        font-size: 0.9rem;
-    }
+    .guide-box { background: rgba(var(--primary-rgb), 0.05); border-left: 3px solid var(--primary-color); padding: 1rem; border-radius: 8px; margin: 1rem 0; color: var(--text-secondary); font-size: 0.9rem; }
     .guide-box.success { background: rgba(16, 185, 129, 0.05); border-left-color: var(--success-green); }
     .guide-box.danger { background: rgba(239, 68, 68, 0.05); border-left-color: var(--danger-red); }
     
-    .info-box { background: var(--secondary-background-color); border: 1px solid var(--border-color); border-left: 0px solid var(--primary-color); padding: 1.25rem; border-radius: 12px; margin: 0.5rem 0; box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08); }
+    .info-box { background: var(--secondary-background-color); border: 1px solid var(--border-color); padding: 1.25rem; border-radius: 12px; margin: 0.5rem 0; box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08); }
     .info-box h4 { color: var(--primary-color); margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 700; }
     .info-box p { color: var(--text-muted); margin: 0; font-size: 0.9rem; line-height: 1.6; }
 
-    .oscillator-gauge {
-        background: var(--bg-elevated);
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin: 1rem 0;
-    }
-    
-    .gauge-bar {
-        height: 12px;
-        border-radius: 6px;
-        background: linear-gradient(90deg, var(--success-green), var(--primary-color), var(--danger-red));
-        position: relative;
-        margin: 1rem 0;
-    }
-    
-    .gauge-marker {
-        position: absolute;
-        top: -6px;
-        width: 24px;
-        height: 24px;
-        background: white;
-        border-radius: 50%;
-        transform: translateX(-50%);
-        box-shadow: 0 0 10px rgba(255,255,255,0.5);
-        border: 3px solid var(--bg-card);
-    }
-    
-    .gauge-labels {
-        display: flex;
-        justify-content: space-between;
-        font-size: 0.75rem;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    .conviction-meter {
-        background: var(--bg-elevated);
-        border-radius: 12px;
-        padding: 1rem;
-        margin: 0.5rem 0;
-    }
-    
-    .conviction-bar {
-        height: 8px;
-        border-radius: 4px;
-        background: var(--border-color);
-        overflow: hidden;
-    }
-    
-    .conviction-fill {
-        height: 100%;
-        border-radius: 4px;
-        transition: width 0.5s ease;
-    }
+    .conviction-meter { background: var(--bg-elevated); border-radius: 12px; padding: 1rem; margin: 0.5rem 0; }
+    .conviction-bar { height: 8px; border-radius: 4px; background: var(--border-color); overflow: hidden; }
+    .conviction-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
 
     .section-divider { height: 1px; background: linear-gradient(90deg, transparent 0%, var(--border-color) 50%, transparent 100%); margin: 1.5rem 0; }
     
-    .status-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.4rem 0.8rem;
-        border-radius: 20px;
-        font-size: 0.7rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
+    .status-badge { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.8rem; border-radius: 20px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
     .status-badge.buy { background: rgba(16, 185, 129, 0.15); color: var(--success-green); border: 1px solid rgba(16, 185, 129, 0.3); }
     .status-badge.sell { background: rgba(239, 68, 68, 0.15); color: var(--danger-red); border: 1px solid rgba(239, 68, 68, 0.3); }
     .status-badge.neutral { background: rgba(136, 136, 136, 0.15); color: var(--neutral); border: 1px solid rgba(136, 136, 136, 0.3); }
 
-    .stButton>button {
-        border: 2px solid var(--primary-color);
-        background: transparent;
-        color: var(--primary-color);
-        font-weight: 700;
-        border-radius: 12px;
-        padding: 0.75rem 2rem;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
+    .stButton>button { border: 2px solid var(--primary-color); background: transparent; color: var(--primary-color); font-weight: 700; border-radius: 12px; padding: 0.75rem 2rem; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); text-transform: uppercase; letter-spacing: 0.5px; }
     .stButton>button:hover { box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6); background: var(--primary-color); color: #1A1A1A; transform: translateY(-2px); }
-    .stButton>button:active { transform: translateY(0); }
     
     .stTabs [data-baseweb="tab-list"] { gap: 24px; background: transparent; }
-    .stTabs [data-baseweb="tab"] { color: var(--text-muted); border-bottom: 2px solid transparent; transition: color 0.3s, border-bottom 0.3s; background: transparent; font-weight: 600; }
+    .stTabs [data-baseweb="tab"] { color: var(--text-muted); border-bottom: 2px solid transparent; background: transparent; font-weight: 600; }
     .stTabs [aria-selected="true"] { color: var(--primary-color); border-bottom: 2px solid var(--primary-color); background: transparent !important; }
     
     .stPlotlyChart { border-radius: 12px; background-color: var(--secondary-background-color); padding: 10px; border: 1px solid var(--border-color); box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.1); }
     .stDataFrame { border-radius: 12px; background-color: var(--secondary-background-color); border: 1px solid var(--border-color); }
-    
     .sidebar-title { font-size: 0.75rem; font-weight: 700; color: var(--primary-color); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.75rem; }
-    
     [data-testid="stSidebar"] { background: var(--secondary-background-color); border-right: 1px solid var(--border-color); }
-    
     .stTextInput > div > div > input { background: var(--bg-elevated) !important; border: 1px solid var(--border-color) !important; border-radius: 8px !important; color: var(--text-primary) !important; }
     .stTextInput > div > div > input:focus { border-color: var(--primary-color) !important; box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.2) !important; }
-    
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: var(--background-color); }
     ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ============================================================================
-# FAIR VALUE BREADTH ENGINE
-# ============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
+# MATHEMATICAL PRIMITIVES (shared theory base with Arthagati v2.1)
+# ══════════════════════════════════════════════════════════════════════════════
 
-class ResidualOscillatorPro:
+def ornstein_uhlenbeck_estimate(series, dt=1.0):
     """
-    Fair Value Breadth Analysis Engine.
+    Estimate OU parameters from residual series: dx = θ(μ−x)dt + σdW.
+    Returns: (theta, mu, sigma)
+    Used in: residual half-life, forward projection, normalization.
+    """
+    x = np.asarray(series, dtype=np.float64)
+    x = x[np.isfinite(x)]
+    if len(x) < 20:
+        return 0.05, 0.0, max(np.std(x), 1e-6) if len(x) > 1 else (0.05, 0.0, 1.0)
     
-    Computes valuation gaps across multiple timeframes to identify
-    high-conviction reversal signals where market turns BEGIN.
+    x_lag = x[:-1]
+    x_curr = x[1:]
+    n = len(x_lag)
+    
+    sx = np.sum(x_lag)
+    sy = np.sum(x_curr)
+    sxx = np.sum(x_lag ** 2)
+    sxy = np.sum(x_lag * x_curr)
+    syy = np.sum(x_curr ** 2)
+    
+    denom = n * sxx - sx ** 2
+    if abs(denom) < 1e-12:
+        return 0.05, np.mean(x), max(np.std(x), 1e-6)
+    
+    a = (n * sxy - sx * sy) / denom
+    b = (sy * sxx - sx * sxy) / denom
+    
+    a = np.clip(a, 1e-6, 1.0 - 1e-6)
+    
+    theta = -np.log(a) / dt
+    mu = b / (1 - a)
+    
+    residuals = x_curr - a * x_lag - b
+    sigma_sq = np.var(residuals)
+    sigma = np.sqrt(max(sigma_sq * 2 * theta / (1 - a ** 2), 1e-12))
+    
+    return max(theta, 1e-4), mu, max(sigma, 1e-6)
+
+
+def kalman_filter_1d(observations, process_var=None, measurement_var=None):
+    """
+    1D Kalman filter for conviction smoothing.
+    Returns: (filtered_state, kalman_gains, estimate_variances)
+    """
+    obs = np.asarray(observations, dtype=np.float64)
+    n = len(obs)
+    if n == 0:
+        return np.array([]), np.array([]), np.array([])
+    
+    if process_var is None:
+        diffs = np.diff(obs[np.isfinite(obs)])
+        process_var = max(np.var(diffs) * 0.1, 1e-8) if len(diffs) > 1 else 1e-3
+    if measurement_var is None:
+        clean = obs[np.isfinite(obs)]
+        measurement_var = max(np.var(clean) * 0.5, 1e-8) if len(clean) > 1 else 1.0
+    
+    state = obs[0] if np.isfinite(obs[0]) else 0.0
+    estimate_var = measurement_var
+    filtered = np.zeros(n)
+    gains = np.zeros(n)
+    variances = np.zeros(n)
+    filtered[0] = state
+    variances[0] = estimate_var
+    
+    for i in range(1, n):
+        pred_var = estimate_var + process_var
+        if np.isfinite(obs[i]):
+            K = pred_var / (pred_var + measurement_var)
+            state = state + K * (obs[i] - state)
+            estimate_var = (1 - K) * pred_var
+            gains[i] = K
+        else:
+            estimate_var = pred_var
+        filtered[i] = state
+        variances[i] = estimate_var
+    
+    return filtered, gains, variances
+
+
+def hurst_rs(series, max_lag=None):
+    """Hurst exponent via Rescaled Range (R/S) analysis."""
+    x = np.asarray(series, dtype=np.float64)
+    x = x[np.isfinite(x)]
+    n = len(x)
+    if n < 20:
+        return 0.5
+    
+    if max_lag is None:
+        max_lag = min(n // 2, 100)
+    
+    lags = []
+    rs_values = []
+    
+    for lag in range(10, max_lag + 1, max(1, max_lag // 20)):
+        rs_list = []
+        for start in range(0, n - lag, lag):
+            segment = x[start:start + lag]
+            if len(segment) < 10:
+                continue
+            mean_seg = np.mean(segment)
+            dev = np.cumsum(segment - mean_seg)
+            R = np.max(dev) - np.min(dev)
+            S = np.std(segment, ddof=1)
+            if S > 1e-10:
+                rs_list.append(R / S)
+        
+        if rs_list:
+            lags.append(lag)
+            rs_values.append(np.mean(rs_list))
+    
+    if len(lags) < 3:
+        return 0.5
+    
+    log_lags = np.log(lags)
+    log_rs = np.log(rs_values)
+    
+    slope, _, _, _, _ = stats.linregress(log_lags, log_rs)
+    return np.clip(slope, 0.01, 0.99)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FAIR VALUE BREADTH ENGINE v2.0
+# ══════════════════════════════════════════════════════════════════════════════
+
+class FairValueEngine:
+    """
+    v2.0 Fair Value Breadth Engine.
+    
+    Key changes from v1.1:
+      1. Walk-forward regression: at each time T, fit only on [0..T), predict T
+      2. OU estimation on out-of-sample residuals
+      3. Kalman-filtered conviction with confidence bands
+      4. Model disagreement (ensemble spread) as uncertainty metric
+      5. Residual Hurst exponent for mean-reversion validation
+      6. Swing-based divergence detection
     """
     
-    LOOKBACKS = [5, 10, 20, 50, 100]  # Multiple timeframes for breadth analysis
+    LOOKBACKS = [5, 10, 20, 50, 100]
+    MIN_TRAIN_SIZE = 60  # Minimum expanding window before first prediction
     
     def __init__(self):
         self.scaler = StandardScaler() if SKLEARN_AVAILABLE else None
-        
+    
     def fit(self, X, y, feature_names=None):
-        """Fit fair value model and compute multi-lookback analytics."""
+        """Walk-forward fit: expanding window regression, then all analytics."""
+        start_time = time.time()
         self.feature_names = feature_names or [f'X{i}' for i in range(X.shape[1])]
         self.n_samples = len(y)
         self.y = y.copy()
         self.X = X.copy()
         
-        # Default behavior if libs are missing
-        all_preds = []
-        self.models = {}
-
-        if SKLEARN_AVAILABLE:
-            X_scaled = self.scaler.fit_transform(X)
-            
-            # Fit ensemble model
-            try:
-                ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=5)
-                ridge.fit(X_scaled, y)
-                self.models['ridge'] = ridge
-                all_preds.append(ridge.predict(X_scaled))
-            except: pass
-            
-            try:
-                huber = HuberRegressor(epsilon=1.35, max_iter=1000)
-                huber.fit(X_scaled, y)
-                self.models['huber'] = huber
-                all_preds.append(huber.predict(X_scaled))
-            except: pass
-
-        if STATSMODELS_AVAILABLE:
-            try:
-                X_ols = sm.add_constant(X)
-                ols = sm.OLS(y, X_ols).fit()
-                self.models['ols'] = ols
-                all_preds.append(ols.predict(X_ols))
-            except: pass
+        # ── Walk-Forward Regression ─────────────────────────────────────
+        # At each time T (T >= MIN_TRAIN_SIZE):
+        #   1. Fit ensemble on X[0:T], y[0:T]
+        #   2. Predict y[T] → fair_value[T]
+        #   3. residual[T] = y[T] - fair_value[T]
+        # For T < MIN_TRAIN_SIZE: use expanding mean as fair value
         
-        # Fallback if no models worked
-        if all_preds:
-            self.predictions = np.mean(all_preds, axis=0)
-        else:
-            # Simple fallback if no libs: Mean
-            self.predictions = np.full_like(y, np.mean(y))
-
+        n = self.n_samples
+        self.predictions = np.full(n, np.nan)
+        self.model_spread = np.zeros(n)  # Std across model predictions (disagreement)
+        
+        for t in range(n):
+            if t < self.MIN_TRAIN_SIZE:
+                # Not enough data for regression — use expanding mean
+                self.predictions[t] = np.mean(y[:t + 1])
+                self.model_spread[t] = 0.0
+            else:
+                # Fit ensemble on [0..t), predict t
+                X_train = X[:t]
+                y_train = y[:t]
+                X_pred = X[t:t + 1]
+                
+                preds_at_t = []
+                
+                if SKLEARN_AVAILABLE and self.scaler is not None:
+                    scaler_t = StandardScaler()
+                    X_train_s = scaler_t.fit_transform(X_train)
+                    X_pred_s = scaler_t.transform(X_pred)
+                    
+                    try:
+                        ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=min(5, t // 5))
+                        ridge.fit(X_train_s, y_train)
+                        preds_at_t.append(ridge.predict(X_pred_s)[0])
+                    except Exception:
+                        pass
+                    
+                    try:
+                        huber = HuberRegressor(epsilon=1.35, max_iter=500)
+                        huber.fit(X_train_s, y_train)
+                        preds_at_t.append(huber.predict(X_pred_s)[0])
+                    except Exception:
+                        pass
+                
+                if STATSMODELS_AVAILABLE:
+                    try:
+                        X_train_c = sm.add_constant(X_train)
+                        X_pred_c = sm.add_constant(X_pred)
+                        ols = sm.OLS(y_train, X_train_c).fit()
+                        preds_at_t.append(ols.predict(X_pred_c)[0])
+                    except Exception:
+                        pass
+                
+                if preds_at_t:
+                    self.predictions[t] = np.mean(preds_at_t)
+                    self.model_spread[t] = np.std(preds_at_t) if len(preds_at_t) > 1 else 0.0
+                else:
+                    self.predictions[t] = np.mean(y[:t + 1])
+                    self.model_spread[t] = 0.0
+        
         self.residuals = y - self.predictions
         
-        # Compute all analytics
+        # ── Final full-sample fit for model stats (OOS R² computed separately) ──
+        self._compute_model_stats()
+        
+        # ── All downstream analytics on OOS residuals ───────────────────
         self._compute_multi_lookback_signals()
         self._compute_breadth_metrics()
-        self._find_pivots()        
+        self._compute_kalman_conviction()
+        self._find_pivots()
         self._compute_divergences()
         self._compute_forward_returns()
+        self._compute_ou_diagnostics()
+        self._compute_hurst()
         
+        elapsed = time.time() - start_time
+        logging.info(f"v2.0 engine [{n} obs, {len(self.feature_names)} features] in {elapsed:.1f}s")
         return self
     
+    def _compute_model_stats(self):
+        """Compute OOS model fit statistics (only on walk-forward portion)."""
+        # Only count predictions from MIN_TRAIN_SIZE onwards (true OOS)
+        oos_mask = np.arange(self.n_samples) >= self.MIN_TRAIN_SIZE
+        y_oos = self.y[oos_mask]
+        pred_oos = self.predictions[oos_mask]
+        
+        valid = np.isfinite(pred_oos)
+        y_valid = y_oos[valid]
+        p_valid = pred_oos[valid]
+        
+        if len(y_valid) > 2 and SKLEARN_AVAILABLE:
+            self.model_stats = {
+                'r2_oos': r2_score(y_valid, p_valid),
+                'rmse_oos': np.sqrt(mean_squared_error(y_valid, p_valid)),
+                'mae_oos': mean_absolute_error(y_valid, p_valid),
+                'n_obs': len(y_valid),
+                'n_features': len(self.feature_names),
+                'avg_model_spread': np.mean(self.model_spread[oos_mask]),
+            }
+        else:
+            ss_res = np.sum((y_valid - p_valid) ** 2)
+            ss_tot = np.sum((y_valid - np.mean(y_valid)) ** 2)
+            self.model_stats = {
+                'r2_oos': 1 - ss_res / max(ss_tot, 1e-10),
+                'rmse_oos': np.sqrt(np.mean((y_valid - p_valid) ** 2)),
+                'mae_oos': np.mean(np.abs(y_valid - p_valid)),
+                'n_obs': len(y_valid),
+                'n_features': len(self.feature_names),
+                'avg_model_spread': np.mean(self.model_spread[oos_mask]),
+            }
+    
     def _compute_multi_lookback_signals(self):
-        """Compute z-scores and zones for each lookback period."""
+        """Compute z-scores and zones for each lookback period on OOS residuals."""
         r = self.residuals
         n = len(r)
         
@@ -416,56 +474,53 @@ class ResidualOscillatorPro:
         for lb in self.LOOKBACKS:
             if n < lb:
                 continue
-                
-            # Rolling z-score
-            rolling_mean = pd.Series(r).rolling(lb).mean().values
-            rolling_std = pd.Series(r).rolling(lb).std().values
-            z_scores = np.where(rolling_std > 0, (r - rolling_mean) / rolling_std, 0)
             
-            # Zone classification
-            zones = []
-            for z in z_scores:
-                if pd.isna(z):
-                    zones.append('N/A')
+            rolling_mean = pd.Series(r).rolling(lb, min_periods=max(lb // 2, 5)).mean().values
+            rolling_std = pd.Series(r).rolling(lb, min_periods=max(lb // 2, 5)).std().values
+            z_scores = np.where(rolling_std > 1e-8, (r - rolling_mean) / rolling_std, 0)
+            
+            zones = np.full(n, 'N/A', dtype=object)
+            for i in range(n):
+                z = z_scores[i]
+                if np.isnan(z):
+                    continue
                 elif z > 2:
-                    zones.append('Extreme Over')
+                    zones[i] = 'Extreme Over'
                 elif z > 1:
-                    zones.append('Overvalued')
+                    zones[i] = 'Overvalued'
                 elif z > -1:
-                    zones.append('Fair Value')
+                    zones[i] = 'Fair Value'
                 elif z > -2:
-                    zones.append('Undervalued')
+                    zones[i] = 'Undervalued'
                 else:
-                    zones.append('Extreme Under')
+                    zones[i] = 'Extreme Under'
             
-            # Buy/Sell signals (threshold crossings)
             buy_signals = np.zeros(n, dtype=bool)
             sell_signals = np.zeros(n, dtype=bool)
-            
             for i in range(1, n):
-                if not pd.isna(z_scores[i]) and not pd.isna(z_scores[i-1]):
-                    if z_scores[i] < -1 and z_scores[i-1] >= -1:
+                if np.isfinite(z_scores[i]) and np.isfinite(z_scores[i - 1]):
+                    if z_scores[i] < -1 and z_scores[i - 1] >= -1:
                         buy_signals[i] = True
-                    if z_scores[i] > 1 and z_scores[i-1] <= 1:
+                    if z_scores[i] > 1 and z_scores[i - 1] <= 1:
                         sell_signals[i] = True
             
             self.lookback_data[lb] = {
                 'z_scores': z_scores,
-                'zones': np.array(zones),
+                'zones': zones,
                 'buy_signals': buy_signals,
                 'sell_signals': sell_signals,
                 'rolling_mean': rolling_mean,
                 'rolling_std': rolling_std,
             }
         
-        # Create master time series DataFrame
+        # Master time series
         self.ts_data = pd.DataFrame({
             'Actual': self.y,
             'FairValue': self.predictions,
             'Residual': self.residuals,
+            'ModelSpread': self.model_spread,
         })
         
-        # Add each lookback's data
         for lb in self.lookback_data:
             self.ts_data[f'Z_{lb}'] = self.lookback_data[lb]['z_scores']
             self.ts_data[f'Zone_{lb}'] = self.lookback_data[lb]['zones']
@@ -473,11 +528,10 @@ class ResidualOscillatorPro:
             self.ts_data[f'Sell_{lb}'] = self.lookback_data[lb]['sell_signals']
     
     def _compute_breadth_metrics(self):
-        """Compute breadth metrics - like % of stocks in each zone."""
+        """Compute breadth metrics across lookback periods."""
         n = len(self.ts_data)
         valid_lookbacks = [lb for lb in self.LOOKBACKS if lb in self.lookback_data]
         
-        # For each observation, count how many lookbacks are in each zone
         oversold_count = np.zeros(n)
         overbought_count = np.zeros(n)
         extreme_oversold = np.zeros(n)
@@ -508,30 +562,41 @@ class ResidualOscillatorPro:
                 if self.lookback_data[lb]['sell_signals'][i]:
                     sell_signal_count[i] += 1
                 
-                if not pd.isna(z):
+                if not np.isnan(z):
                     z_values.append(z)
             
             if z_values:
                 avg_z[i] = np.mean(z_values)
         
-        num_lookbacks = len(valid_lookbacks)
+        num_lb = max(len(valid_lookbacks), 1)
         
-        self.ts_data['OversoldBreadth'] = (oversold_count / num_lookbacks * 100) if num_lookbacks > 0 else 0
-        self.ts_data['OverboughtBreadth'] = (overbought_count / num_lookbacks * 100) if num_lookbacks > 0 else 0
-        self.ts_data['ExtremeOversold'] = (extreme_oversold / num_lookbacks * 100) if num_lookbacks > 0 else 0
-        self.ts_data['ExtremeOverbought'] = (extreme_overbought / num_lookbacks * 100) if num_lookbacks > 0 else 0
+        self.ts_data['OversoldBreadth'] = oversold_count / num_lb * 100
+        self.ts_data['OverboughtBreadth'] = overbought_count / num_lb * 100
+        self.ts_data['ExtremeOversold'] = extreme_oversold / num_lb * 100
+        self.ts_data['ExtremeOverbought'] = extreme_overbought / num_lb * 100
         self.ts_data['BuySignalBreadth'] = buy_signal_count
         self.ts_data['SellSignalBreadth'] = sell_signal_count
         self.ts_data['AvgZ'] = avg_z
         
-        # Composite conviction score (-100 to +100)
-        # Negative = Oversold conviction, Positive = Overbought conviction
-        self.ts_data['ConvictionScore'] = (
+        # Raw conviction (before Kalman)
+        self.ts_data['ConvictionRaw'] = (
             self.ts_data['OverboughtBreadth'] - self.ts_data['OversoldBreadth'] +
             (self.ts_data['ExtremeOverbought'] - self.ts_data['ExtremeOversold']) * 0.5
         )
+    
+    def _compute_kalman_conviction(self):
+        """Apply Kalman filter to raw conviction for smooth, confident signal."""
+        raw = self.ts_data['ConvictionRaw'].values
         
-        # Regime classification
+        filtered, gains, variances = kalman_filter_1d(raw)
+        
+        kalman_std = np.sqrt(np.maximum(variances, 0))
+        
+        self.ts_data['ConvictionScore'] = filtered
+        self.ts_data['ConvictionUpper'] = np.clip(filtered + 1.96 * kalman_std, -100, 100)
+        self.ts_data['ConvictionLower'] = np.clip(filtered - 1.96 * kalman_std, -100, 100)
+        
+        # Regime classification on smoothed conviction
         regimes = []
         for score in self.ts_data['ConvictionScore']:
             if score < -40:
@@ -544,31 +609,42 @@ class ResidualOscillatorPro:
                 regimes.append('OVERBOUGHT')
             else:
                 regimes.append('NEUTRAL')
-        
         self.ts_data['Regime'] = regimes
     
     def _compute_divergences(self):
-        """Detect price vs residual divergences."""
+        """Swing-based divergence detection (improved from v1.1 point-to-point)."""
         n = len(self.ts_data)
-        lookback = 5
+        price = self.y
+        residual = self.residuals
         
         bull_div = np.zeros(n, dtype=bool)
         bear_div = np.zeros(n, dtype=bool)
         
-        price = self.y
-        residual = self.residuals
+        # Find swing lows/highs using local extrema
+        order = 5
+        if n < order * 3:
+            self.ts_data['BullishDiv'] = bull_div
+            self.ts_data['BearishDiv'] = bear_div
+            return
         
-        for i in range(lookback, n):
-            price_change = price[i] - price[i - lookback]
-            residual_change = residual[i] - residual[i - lookback]
-            
-            # Bullish divergence: price falling but residual rising (less negative)
-            if price_change < 0 and residual_change > 0 and residual[i] < -self.residual_stats['std']:
-                bull_div[i] = True
-            
-            # Bearish divergence: price rising but residual falling (less positive)
-            if price_change > 0 and residual_change < 0 and residual[i] > self.residual_stats['std']:
-                bear_div[i] = True
+        price_lows = argrelextrema(price, np.less, order=order)[0]
+        price_highs = argrelextrema(price, np.greater, order=order)[0]
+        
+        # Bullish divergence: price makes lower low, residual makes higher low
+        for i in range(1, len(price_lows)):
+            idx_curr = price_lows[i]
+            idx_prev = price_lows[i - 1]
+            if price[idx_curr] < price[idx_prev] and residual[idx_curr] > residual[idx_prev]:
+                if residual[idx_curr] < -np.std(residual[:idx_curr + 1]) * 0.5:
+                    bull_div[idx_curr] = True
+        
+        # Bearish divergence: price makes higher high, residual makes lower high
+        for i in range(1, len(price_highs)):
+            idx_curr = price_highs[i]
+            idx_prev = price_highs[i - 1]
+            if price[idx_curr] > price[idx_prev] and residual[idx_curr] < residual[idx_prev]:
+                if residual[idx_curr] > np.std(residual[:idx_curr + 1]) * 0.5:
+                    bear_div[idx_curr] = True
         
         self.ts_data['BullishDiv'] = bull_div
         self.ts_data['BearishDiv'] = bear_div
@@ -585,8 +661,6 @@ class ResidualOscillatorPro:
             'bottoms': min_idx,
             'avg_top': np.mean(r[max_idx]) if len(max_idx) > 0 else np.mean(r) + np.std(r),
             'avg_bottom': np.mean(r[min_idx]) if len(min_idx) > 0 else np.mean(r) - np.std(r),
-            'std_top': np.std(r[max_idx]) if len(max_idx) > 1 else np.std(r),
-            'std_bottom': np.std(r[min_idx]) if len(min_idx) > 1 else np.std(r),
         }
         
         self.ts_data['IsPivotTop'] = False
@@ -596,12 +670,11 @@ class ResidualOscillatorPro:
         if len(min_idx) > 0:
             self.ts_data.loc[min_idx, 'IsPivotBottom'] = True
         
-        # Global residual stats
         self.residual_stats = {
             'mean': np.mean(r),
             'std': np.std(r),
             'current': r[-1],
-            'current_zscore': (r[-1] - np.mean(r)) / np.std(r) if np.std(r) > 0 else 0,
+            'current_zscore': (r[-1] - np.mean(r)) / max(np.std(r), 1e-8),
             'percentile': stats.percentileofscore(r, r[-1]),
             'min': np.min(r),
             'max': np.max(r),
@@ -611,12 +684,41 @@ class ResidualOscillatorPro:
         """Compute forward returns for signal validation."""
         n = len(self.ts_data)
         y = self.y
-        
         for period in [5, 10, 20]:
             fwd_ret = np.full(n, np.nan)
             for i in range(n - period):
-                fwd_ret[i] = (y[i + period] - y[i]) / y[i] * 100
+                if y[i] > 0:
+                    fwd_ret[i] = (y[i + period] - y[i]) / y[i] * 100
             self.ts_data[f'FwdRet_{period}'] = fwd_ret
+    
+    def _compute_ou_diagnostics(self):
+        """OU estimation on out-of-sample residuals."""
+        r = self.residuals
+        oos_r = r[self.MIN_TRAIN_SIZE:]
+        
+        if len(oos_r) > 30:
+            theta, mu, sigma = ornstein_uhlenbeck_estimate(oos_r)
+        else:
+            theta, mu, sigma = 0.05, 0.0, max(np.std(r), 1e-6)
+        
+        self.ou_params = {
+            'theta': theta,
+            'mu': mu,
+            'sigma': sigma,
+            'half_life': np.log(2) / max(theta, 1e-4),
+            'stationary_std': sigma / np.sqrt(2 * max(theta, 1e-4)),
+        }
+        
+        # Forward projection: E[residual(t+n)] = μ + (r_current - μ) * exp(-θ*n)
+        current_r = r[-1]
+        proj_days = np.arange(1, 91)
+        self.ou_projection = mu + (current_r - mu) * np.exp(-theta * proj_days)
+    
+    def _compute_hurst(self):
+        """Hurst exponent of residuals — empirical mean-reversion test."""
+        r = self.residuals
+        oos_r = r[self.MIN_TRAIN_SIZE:]
+        self.hurst = hurst_rs(oos_r) if len(oos_r) > 30 else 0.5
     
     def get_current_signal(self):
         """Get comprehensive current signal."""
@@ -627,8 +729,8 @@ class ResidualOscillatorPro:
         regime = current['Regime']
         oversold_breadth = current['OversoldBreadth']
         overbought_breadth = current['OverboughtBreadth']
+        model_spread = current['ModelSpread']
         
-        # Signal determination
         if conviction < -60:
             signal, strength = 'BUY', 'STRONG'
         elif conviction < -40:
@@ -644,7 +746,6 @@ class ResidualOscillatorPro:
         else:
             signal, strength = 'HOLD', 'NEUTRAL'
         
-        # Confidence based on breadth agreement
         if signal == 'BUY':
             confidence = 'HIGH' if oversold_breadth >= 80 else 'MEDIUM' if oversold_breadth >= 60 else 'LOW'
         elif signal == 'SELL':
@@ -657,6 +758,8 @@ class ResidualOscillatorPro:
             'strength': strength,
             'confidence': confidence,
             'conviction_score': conviction,
+            'conviction_upper': current['ConvictionUpper'],
+            'conviction_lower': current['ConvictionLower'],
             'regime': regime,
             'oversold_breadth': oversold_breadth,
             'overbought_breadth': overbought_breadth,
@@ -664,34 +767,19 @@ class ResidualOscillatorPro:
             'fair_value': current['FairValue'],
             'actual': current['Actual'],
             'avg_z': current['AvgZ'],
+            'model_spread': model_spread,
             'has_bullish_div': current['BullishDiv'],
             'has_bearish_div': current['BearishDiv'],
+            'ou_half_life': self.ou_params['half_life'],
+            'hurst': self.hurst,
         }
     
     def get_model_stats(self):
-        """Get model fit statistics."""
-        if SKLEARN_AVAILABLE:
-            r2 = r2_score(self.y, self.predictions)
-            rmse = np.sqrt(mean_squared_error(self.y, self.predictions))
-            mae = mean_absolute_error(self.y, self.predictions)
-        else:
-            r2, rmse, mae = 0, 0, 0 # Placeholders if sklearn missing
-            
-        return {
-            'r2': r2,
-            'rmse': rmse,
-            'mae': mae,
-            'n_obs': len(self.y),
-            'n_features': len(self.feature_names),
-        }
+        return self.model_stats
     
     def get_regime_stats(self):
-        """Get regime distribution statistics."""
         ts = self.ts_data
-        n = len(ts)
-        
         regime_counts = ts['Regime'].value_counts()
-        
         return {
             'strongly_oversold': regime_counts.get('STRONGLY OVERSOLD', 0),
             'oversold': regime_counts.get('OVERSOLD', 0),
@@ -708,26 +796,20 @@ class ResidualOscillatorPro:
         }
     
     def get_signal_performance(self):
-        """Analyze historical signal performance."""
         ts = self.ts_data
-        
         results = {}
-        
         for period in [5, 10, 20]:
             buy_returns = []
             sell_returns = []
-            
             for i in range(len(ts) - period):
-                if ts['ConvictionScore'].iloc[i] < -40:  # Oversold
+                if ts['ConvictionScore'].iloc[i] < -40:
                     fwd = ts[f'FwdRet_{period}'].iloc[i]
                     if not pd.isna(fwd):
                         buy_returns.append(fwd)
-                
-                if ts['ConvictionScore'].iloc[i] > 40:  # Overbought
+                if ts['ConvictionScore'].iloc[i] > 40:
                     fwd = ts[f'FwdRet_{period}'].iloc[i]
                     if not pd.isna(fwd):
-                        sell_returns.append(-fwd)  # Invert for sell
-            
+                        sell_returns.append(-fwd)
             results[period] = {
                 'buy_avg': np.mean(buy_returns) if buy_returns else 0,
                 'buy_hit': np.mean([r > 0 for r in buy_returns]) if buy_returns else 0,
@@ -736,13 +818,12 @@ class ResidualOscillatorPro:
                 'sell_hit': np.mean([r > 0 for r in sell_returns]) if sell_returns else 0,
                 'sell_count': len(sell_returns),
             }
-        
         return results
 
 
-# ============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 # DATA UTILITIES
-# ============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 
 def load_google_sheet(sheet_url):
     try:
@@ -776,11 +857,12 @@ def clean_data(df, target, features, date_col=None):
             data[date_col] = pd.to_datetime(data[date_col], errors='coerce')
             data = data.dropna(subset=[date_col])
             data = data.sort_values(date_col)
-        except: pass
+        except Exception:
+            pass
     return data.reset_index(drop=True)
 
 
-def update_chart_theme(fig, date_range=None):
+def update_chart_theme(fig):
     fig.update_layout(
         template="plotly_dark", plot_bgcolor="#1A1A1A", paper_bgcolor="#1A1A1A",
         font=dict(family="Inter", color="#EAEAEA"),
@@ -792,27 +874,28 @@ def update_chart_theme(fig, date_range=None):
     return fig
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# LANDING PAGE
+# ══════════════════════════════════════════════════════════════════════════════
+
 def render_landing_page():
-    """Renders the landing/home page content when no data is loaded."""
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Feature cards
     col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("""
         <div class='metric-card purple' style='min-height: 280px; justify-content: flex-start;'>
-            <h3 style='color: var(--purple); margin-bottom: 0.5rem;'>🎯 Fair Value Engine</h3>
+            <h3 style='color: var(--purple); margin-bottom: 0.5rem;'>🎯 Walk-Forward Fair Value</h3>
             <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.6;'>
-                Uses advanced ensemble regression (Ridge, Huber, OLS) to determine the theoretical "Fair Value" of an asset based on macro drivers.
+                v2.0 uses expanding-window regression: at each time T, the model only sees data up to T.
+                No look-ahead bias. The R² you see is out-of-sample.
             </p>
             <br>
             <p style='color: var(--text-secondary); font-size: 0.85rem;'>
-                <strong>Methodology:</strong><br>
-                • Linear & Robust Regression<br>
-                • Feature Scaling<br>
-                • Macro-Factor Attribution<br>
-                • Dynamic Re-calibration
+                <strong>Ensemble:</strong> Ridge + Huber + OLS<br>
+                <strong>Validation:</strong> Walk-forward OOS<br>
+                <strong>Uncertainty:</strong> Model disagreement
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -820,17 +903,16 @@ def render_landing_page():
     with col2:
         st.markdown("""
         <div class='metric-card info' style='min-height: 280px; justify-content: flex-start;'>
-            <h3 style='color: var(--info-cyan); margin-bottom: 0.5rem;'>📉 Valuation Gap</h3>
+            <h3 style='color: var(--info-cyan); margin-bottom: 0.5rem;'>📉 OU Mean-Reversion</h3>
             <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.6;'>
-                Measures the premium/discount between actual price and fair value. This gap is strongly mean-reverting - extremes signal reversal origins.
+                Residuals are modeled as Ornstein-Uhlenbeck: dx = θ(μ−x)dt + σdW.
+                The half-life tells you when the gap is expected to close.
             </p>
             <br>
             <p style='color: var(--text-secondary); font-size: 0.85rem;'>
-                <strong>Key Metrics:</strong><br>
-                • Z-Score Analysis<br>
-                • Mean Reversion Detection<br>
-                • Pivot Identification<br>
-                • Volatility Normalization
+                <strong>Output:</strong> Half-life in days<br>
+                <strong>Projection:</strong> 90-day forward path<br>
+                <strong>Validation:</strong> Hurst exponent
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -838,110 +920,45 @@ def render_landing_page():
     with col3:
         st.markdown("""
         <div class='metric-card primary' style='min-height: 280px; justify-content: flex-start;'>
-            <h3 style='color: var(--primary-color); margin-bottom: 0.5rem;'>📊 Breadth Conviction</h3>
+            <h3 style='color: var(--primary-color); margin-bottom: 0.5rem;'>📊 Kalman Conviction</h3>
             <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.6;'>
-                Analyzes valuation across 5 distinct timeframes (5D to 100D). When all timeframes agree, high-conviction reversal signals emerge.
+                Breadth conviction is Kalman-filtered. Noisy raw scores become smooth signals
+                with 95% confidence bands. Wide band = uncertain.
             </p>
             <br>
             <p style='color: var(--text-secondary); font-size: 0.85rem;'>
-                <strong>Lookback Periods:</strong><br>
-                • Short: 5D, 10D<br>
-                • Medium: 20D, 50D<br>
-                • Long: 100D<br>
-                • -100 to +100 Conviction
+                <strong>Lookbacks:</strong> 5D, 10D, 20D, 50D, 100D<br>
+                <strong>Smoothing:</strong> Adaptive Kalman<br>
+                <strong>Range:</strong> -100 to +100
             </p>
         </div>
         """, unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Analysis methodology section
-    st.markdown("### 📐 Signal Logic")
-    
-    col_m1, col_m2 = st.columns(2)
-    
-    with col_m1:
-        st.markdown("""
-        <div class='signal-card fair' style='padding: 1.5rem;'>
-            <h4 style='color: var(--primary-color); margin-bottom: 0.5rem;'>The Anchor (Fair Value)</h4>
-            <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.7;'>
-                Prices deviate in the short term, but are anchored by fundamentals in the long term. 
-                We calculate this anchor dynamically using a basket of predictors (Yields, Currency, PE, etc.).
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_m2:
-        st.markdown("""
-        <div class='signal-card undervalued' style='padding: 1.5rem; border-color: var(--text-muted); box-shadow: none;'>
-            <h4 style='color: var(--text-primary); margin-bottom: 0.5rem;'>The Elastic (Valuation Gap)</h4>
-            <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.7;'>
-                The distance between Price and Value stretches like a rubber band. 
-                We measure this tension. Extreme tension (±2σ) across multiple timeframes signals where reversals BEGIN.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Signal interpretation
-    st.markdown("### 🎯 Signal Interpretation")
-    
-    col_s1, col_s2, col_s3 = st.columns(3)
-    
-    with col_s1:
-        st.markdown("""
-        <div style='background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success-green); border-radius: 12px; padding: 1.25rem;'>
-            <h4 style='color: var(--success-green); margin-bottom: 0.75rem;'>🟢 Undervalued Zone</h4>
-            <p style='color: var(--text-muted); font-size: 0.85rem;'>Conviction < -40</p>
-            <p style='color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.5rem;'>
-                Price is significantly below Fair Value across most timeframes. High probability of upward reversion.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_s2:
-        st.markdown("""
-        <div style='background: rgba(136, 136, 136, 0.1); border: 1px solid var(--neutral); border-radius: 12px; padding: 1.25rem;'>
-            <h4 style='color: var(--neutral); margin-bottom: 0.75rem;'>⚪ Fair Value Zone</h4>
-            <p style='color: var(--text-muted); font-size: 0.85rem;'>Conviction -20 to +20</p>
-            <p style='color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.5rem;'>
-                Price is aligned with fundamentals. No strong statistical edge in either direction.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col_s3:
-        st.markdown("""
-        <div style='background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger-red); border-radius: 12px; padding: 1.25rem;'>
-            <h4 style='color: var(--danger-red); margin-bottom: 0.75rem;'>🔴 Overvalued Zone</h4>
-            <p style='color: var(--text-muted); font-size: 0.85rem;'>Conviction > 40</p>
-            <p style='color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.5rem;'>
-                Price is significantly above Fair Value across most timeframes. High probability of downward reversion.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Getting started
     st.markdown("""
     <div class='info-box'>
         <h4>🚀 Getting Started</h4>
-        <p style='color: var(--text-muted); line-height: 1.7;'>
-            Use the <strong>Sidebar</strong> to load your dataset. You can either upload a CSV/Excel file or connect a Google Sheet.
-            <br>Once loaded, select your <strong>Target</strong> (what to predict) and <strong>Predictors</strong> (macro factors) to generate the model.
-        </p>
+        <p>Use the <strong>Sidebar</strong> to load data (CSV/Excel or Google Sheet).
+        Select a <strong>Target</strong> and <strong>Predictors</strong>, then click <strong>Apply</strong> to run the walk-forward engine.</p>
     </div>
     """, unsafe_allow_html=True)
 
 
-# ============================================================================
+def render_footer():
+    from datetime import timezone
+    utc_now = datetime.now(timezone.utc)
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    current_time_ist = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    st.caption(f"© 2026 {PRODUCT_NAME} | {COMPANY} | {VERSION} | {current_time_ist}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN APPLICATION
-# ============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    # --- Nirnay-style Sidebar ---
+    # ── Sidebar ─────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; padding: 1rem 0; margin-bottom: 1rem;">
@@ -973,10 +990,10 @@ def main():
                     if error:
                         st.error(f"Failed: {error}")
                         return
-                    if 'oscillator' in st.session_state:
-                        del st.session_state.oscillator
-                    if 'osc_cache' in st.session_state:
-                        del st.session_state.osc_cache
+                    if 'engine' in st.session_state:
+                        del st.session_state.engine
+                    if 'engine_cache' in st.session_state:
+                        del st.session_state.engine_cache
                     st.session_state['data'] = df
                     st.toast("Data loaded successfully!", icon="✅")
             if 'data' in st.session_state:
@@ -984,20 +1001,19 @@ def main():
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     
-    # Show header and landing page only when no data
+    # ── Landing page if no data ─────────────────────────────────────────
     if df is None:
-        # Show header on landing page
         st.markdown("""
         <div class="premium-header">
             <h1>AARAMBH : Fair Value Breadth</h1>
-            <div class="tagline">Multi-Timeframe Valuation Analysis for Market Reversals</div>
+            <div class="tagline">Walk-Forward Valuation · OU Mean-Reversion · Kalman Conviction | Quantitative Reversal Analysis</div>
         </div>
         """, unsafe_allow_html=True)
         render_landing_page()
         render_footer()
         return
     
-    # --- Config (continued in sidebar) ---
+    # ── Model Configuration (staging → commit) ──────────────────────────
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     all_cols = df.columns.tolist()
     
@@ -1009,17 +1025,20 @@ def main():
         st.markdown('<div class="sidebar-title">🎯 Model Configuration</div>', unsafe_allow_html=True)
         
         default_target = "NIFTY50_PE" if "NIFTY50_PE" in numeric_cols else numeric_cols[0]
-        default_preds = ["AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH", "IN10Y", "IN02Y", "IN30Y", "INIRYY", "REPO", "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB"]
+        default_preds = ["AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH", "IN10Y", "IN02Y",
+                         "IN30Y", "INIRYY", "REPO", "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB"]
         
-        target_col = st.selectbox("Target Variable", numeric_cols, 
-                                           index=numeric_cols.index(default_target) if default_target in numeric_cols else 0)
+        target_col = st.selectbox("Target Variable", numeric_cols,
+                                  index=numeric_cols.index(default_target) if default_target in numeric_cols else 0)
         
         available = [c for c in numeric_cols if c != target_col]
         valid_defaults = [p for p in default_preds if p in available]
         
-        feature_cols = st.multiselect("Predictors", available, default=valid_defaults or available[:3])
+        # Staging predictors — user plays freely, no compute
+        staging_features = st.multiselect("Predictors", available,
+                                          default=valid_defaults or available[:3])
         
-        if not feature_cols:
+        if not staging_features:
             st.info("👈 Select predictors")
             render_footer()
             return
@@ -1029,61 +1048,121 @@ def main():
         st.markdown('<div class="sidebar-title">📅 Date Column</div>', unsafe_allow_html=True)
         date_candidates = [c for c in all_cols if 'date' in c.lower()]
         date_col = st.selectbox("Date", ["None"] + all_cols,
-                                         index=all_cols.index(date_candidates[0]) + 1 if date_candidates else 0,
-                                         label_visibility="collapsed")
+                                index=all_cols.index(date_candidates[0]) + 1 if date_candidates else 0,
+                                label_visibility="collapsed")
+        
+        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+        
+        # ── Apply Button ────────────────────────────────────────────────
+        # Build the desired cache key from staging config
+        staging_key = f"{target_col}|{'|'.join(sorted(staging_features))}|{date_col}"
+        active_key = st.session_state.get('engine_cache', '')
+        has_changes = staging_key != active_key
+        
+        if has_changes:
+            st.caption(f"Pending config change — {len(staging_features)} predictors")
+        
+        apply_clicked = st.button(
+            "✅ Apply & Compute" if has_changes else "No changes",
+            use_container_width=True,
+            disabled=not has_changes,
+            type="primary" if has_changes else "secondary"
+        )
+        
+        if apply_clicked and has_changes:
+            st.session_state['active_target'] = target_col
+            st.session_state['active_features'] = staging_features
+            st.session_state['active_date_col'] = date_col
+            if 'engine' in st.session_state:
+                del st.session_state.engine
+            if 'engine_cache' in st.session_state:
+                del st.session_state.engine_cache
+            st.rerun()
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         st.markdown(f"""
         <div class='info-box'>
             <p style='font-size: 0.8rem; margin: 0; color: var(--text-muted); line-height: 1.5;'>
                 <strong>Version:</strong> {VERSION}<br>
-                <strong>Engine:</strong> Ridge + Huber + OLS<br>
+                <strong>Engine:</strong> Walk-Forward · OU · Kalman<br>
                 <strong>Lookbacks:</strong> 5D, 10D, 20D, 50D, 100D
             </p>
         </div>
         """, unsafe_allow_html=True)
     
-    # Clean
-    data = clean_data(df, target_col, feature_cols, date_col if date_col != "None" else None)
+    # ── Resolve active config ───────────────────────────────────────────
+    active_target = st.session_state.get('active_target', target_col)
+    active_features = st.session_state.get('active_features', staging_features)
+    active_date = st.session_state.get('active_date_col', date_col)
+    feature_cols = active_features
     
-    if len(data) < 50:
-        st.error("Need 50+ data points for multi-lookback analysis.")
+    # ── Header ──────────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="premium-header">
+        <h1>AARAMBH : Fair Value Breadth</h1>
+        <div class="tagline">Walk-Forward Valuation · OU Mean-Reversion · Kalman Conviction | Quantitative Reversal Analysis</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # ── Data staleness warning ──────────────────────────────────────────
+    if active_date != "None" and active_date in df.columns:
+        try:
+            dates = pd.to_datetime(df[active_date], errors='coerce').dropna()
+            if len(dates) > 0:
+                latest_date = dates.max()
+                from datetime import timezone as tz
+                today = datetime.now(tz.utc) + timedelta(hours=5, minutes=30)
+                data_age = (today - latest_date.to_pydatetime().replace(tzinfo=tz.utc)).days
+                if data_age > 3:
+                    st.markdown(f"""
+                    <div style="background: rgba(239,68,68,0.1); border: 1px solid #ef4444; border-radius: 10px;
+                                padding: 0.75rem 1.25rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 1.4rem;">⚠️</span>
+                        <div>
+                            <span style="color: #ef4444; font-weight: 700;">Stale Data</span>
+                            <span style="color: #888; font-size: 0.85rem;"> — Last data point is <b>{latest_date.strftime('%d %b %Y')}</b> ({data_age} days ago). Update your data source.</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        except Exception:
+            pass
+    
+    # ── Clean & Fit ─────────────────────────────────────────────────────
+    data = clean_data(df, active_target, feature_cols, active_date if active_date != "None" else None)
+    
+    if len(data) < 80:
+        st.error("Need 80+ data points for walk-forward analysis (60 minimum training + 20 OOS).")
         return
     
     X = data[feature_cols].values
-    y = data[target_col].values
+    y = data[active_target].values
     
-    # Fit
-    cache_key = f"{target_col}_{'-'.join(sorted(feature_cols))}_{len(data)}"
+    cache_key = f"{active_target}|{'|'.join(sorted(feature_cols))}|{len(data)}"
     
-    if 'osc_cache' not in st.session_state or st.session_state.osc_cache != cache_key:
-        with st.spinner("Computing multi-lookback analysis..."):
-            osc = ResidualOscillatorPro()
-            osc.fit(X, y, feature_names=feature_cols)
-            st.session_state.oscillator = osc
-            st.session_state.osc_cache = cache_key
+    if 'engine_cache' not in st.session_state or st.session_state.engine_cache != cache_key:
+        with st.spinner("Running walk-forward regression..."):
+            engine = FairValueEngine()
+            engine.fit(X, y, feature_names=feature_cols)
+            st.session_state.engine = engine
+            st.session_state.engine_cache = cache_key
     
-    osc = st.session_state.oscillator
-    signal = osc.get_current_signal()
-    model_stats = osc.get_model_stats()
-    regime_stats = osc.get_regime_stats()
-    ts = osc.ts_data.copy()
+    engine = st.session_state.engine
+    signal = engine.get_current_signal()
+    model_stats = engine.get_model_stats()
+    regime_stats = engine.get_regime_stats()
+    ts = engine.ts_data.copy()
     
-    # Date processing
-    if date_col != "None" and date_col in data.columns:
-        ts['Date'] = pd.to_datetime(data[date_col].values)
+    if active_date != "None" and active_date in data.columns:
+        ts['Date'] = pd.to_datetime(data[active_date].values)
     else:
         ts['Date'] = np.arange(len(ts))
-
+    
     # ═══════════════════════════════════════════════════════════════════════
-    # SUMMARY METRICS (UMA-style header)
+    # METRIC CARDS
     # ═══════════════════════════════════════════════════════════════════════
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Adjusted layout: Removed Observations, gave more space to Signal & Regime
-    # Old: c1-c6 (equal)
-    # New: 5 cols with weighted distribution
     c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
     
     with c1:
@@ -1096,20 +1175,43 @@ def main():
     
     with c3:
         conv_color = "success" if signal['conviction_score'] < -40 else "danger" if signal['conviction_score'] > 40 else "neutral"
-        st.markdown(f'<div class="metric-card {conv_color}"><h4>Conviction</h4><h2>{signal["conviction_score"]:+.0f}</h2><div class="sub-metric">-100 to +100</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card {conv_color}"><h4>Conviction</h4><h2>{signal["conviction_score"]:+.0f}</h2><div class="sub-metric">Kalman-Filtered</div></div>', unsafe_allow_html=True)
     
     with c4:
         sig_color = "success" if signal['signal'] == 'BUY' else "danger" if signal['signal'] == 'SELL' else "primary"
         st.markdown(f'<div class="metric-card {sig_color}"><h4>Signal</h4><h2>{signal["signal"]}</h2><div class="sub-metric">{signal["strength"]}</div></div>', unsafe_allow_html=True)
     
     with c5:
-        reg_color = "success" if 'OVERSOLD' in signal['regime'] else "danger" if 'OVERBOUGHT' in signal['regime'] else "NEUTRAL"
+        reg_color = "success" if 'OVERSOLD' in signal['regime'] else "danger" if 'OVERBOUGHT' in signal['regime'] else "neutral"
         st.markdown(f'<div class="metric-card {reg_color}"><h4>Regime</h4><h2>{signal["regime"]}</h2><div class="sub-metric">Current State</div></div>', unsafe_allow_html=True)
+    
+    # ── Diagnostics Row ─────────────────────────────────────────────────
+    d1, d2, d3, d4 = st.columns(4)
+    
+    with d1:
+        hl = signal['ou_half_life']
+        st.markdown(f'<div class="metric-card primary"><h4>OU Half-Life</h4><h2>{hl:.0f}d</h2><div class="sub-metric">Gap reversion time</div></div>', unsafe_allow_html=True)
+    
+    with d2:
+        h = signal['hurst']
+        h_label = 'Trending' if h > 0.55 else 'Random' if h > 0.45 else 'Mean-Reverting'
+        h_class = 'danger' if h > 0.55 else 'neutral' if h > 0.45 else 'success'
+        st.markdown(f'<div class="metric-card {h_class}"><h4>Residual Hurst</h4><h2>{h:.2f}</h2><div class="sub-metric">{h_label}</div></div>', unsafe_allow_html=True)
+    
+    with d3:
+        r2 = model_stats['r2_oos']
+        r2_class = 'success' if r2 > 0.7 else 'warning' if r2 > 0.4 else 'danger'
+        st.markdown(f'<div class="metric-card {r2_class}"><h4>OOS R²</h4><h2>{r2:.3f}</h2><div class="sub-metric">Walk-Forward</div></div>', unsafe_allow_html=True)
+    
+    with d4:
+        spread = model_stats['avg_model_spread']
+        sp_class = 'success' if spread < 0.5 else 'warning' if spread < 1.5 else 'danger'
+        st.markdown(f'<div class="metric-card {sp_class}"><h4>Model Spread</h4><h2>{spread:.2f}</h2><div class="sub-metric">Ensemble Disagreement</div></div>', unsafe_allow_html=True)
     
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     
     # ═══════════════════════════════════════════════════════════════════════
-    # GLOBAL TIMEFRAME FILTER
+    # TIMEFRAME FILTER
     # ═══════════════════════════════════════════════════════════════════════
     
     tf_col1, tf_col2 = st.columns([1, 6])
@@ -1117,41 +1219,28 @@ def main():
         st.markdown("##### ⏱️ View Period")
     with tf_col2:
         time_filters = ["1M", "6M", "1Y", "2Y", "ALL"]
-        # Default to 1Y (index 2)
-        selected_tf = st.radio("Select Timeframe", time_filters, index=2, horizontal=True, label_visibility="collapsed")
+        selected_tf = st.radio("Timeframe", time_filters, index=2, horizontal=True, label_visibility="collapsed")
     
-    # Apply filtering
     ts_filtered = ts.copy()
-    
     if selected_tf != "ALL":
-        if date_col != "None" and not ts['Date'].empty and pd.api.types.is_datetime64_any_dtype(ts['Date']):
+        if active_date != "None" and pd.api.types.is_datetime64_any_dtype(ts['Date']):
             max_date = ts['Date'].max()
-            if selected_tf == "1M":
-                cutoff = max_date - pd.DateOffset(months=1)
-            elif selected_tf == "6M":
-                cutoff = max_date - pd.DateOffset(months=6)
-            elif selected_tf == "1Y":
-                cutoff = max_date - pd.DateOffset(years=1)
-            elif selected_tf == "2Y":
-                cutoff = max_date - pd.DateOffset(years=2)
+            offsets = {"1M": pd.DateOffset(months=1), "6M": pd.DateOffset(months=6),
+                       "1Y": pd.DateOffset(years=1), "2Y": pd.DateOffset(years=2)}
+            cutoff = max_date - offsets.get(selected_tf, pd.DateOffset(years=1))
             ts_filtered = ts[ts['Date'] >= cutoff]
         else:
-            # Fallback for index-based or non-datetime
-            n = len(ts)
-            if selected_tf == "1M": cutoff_idx = max(0, n - 21)
-            elif selected_tf == "6M": cutoff_idx = max(0, n - 126)
-            elif selected_tf == "1Y": cutoff_idx = max(0, n - 252)
-            elif selected_tf == "2Y": cutoff_idx = max(0, n - 504)
-            ts_filtered = ts.iloc[cutoff_idx:]
+            n_map = {"1M": 21, "6M": 126, "1Y": 252, "2Y": 504}
+            ts_filtered = ts.iloc[max(0, len(ts) - n_map.get(selected_tf, 252)):]
     
     x_axis = ts_filtered['Date']
-    x_title = "Date" if date_col != "None" else "Index"
+    x_title = "Date" if active_date != "None" else "Index"
     
     # ═══════════════════════════════════════════════════════════════════════
-    # TABS (Regime Analysis first)
+    # TABS
     # ═══════════════════════════════════════════════════════════════════════
     
-    tab4, tab1, tab2, tab3, tab5 = st.tabs([
+    tab_regime, tab_signal, tab_zones, tab_signals, tab_data = st.tabs([
         "**🎯 Regime Analysis**",
         "**📊 Signal Dashboard**",
         "**📈 Zone Trends**",
@@ -1160,259 +1249,54 @@ def main():
     ])
     
     # ═══════════════════════════════════════════════════════════════════════
-    # TAB 1: SIGNAL DASHBOARD
+    # TAB: REGIME ANALYSIS
     # ═══════════════════════════════════════════════════════════════════════
-    with tab1:
-        col_left, col_right = st.columns([2, 1])
-        
-        with col_left:
-            st.markdown("##### Current Signal Analysis")
-            
-            signal_class = 'undervalued' if signal['signal'] == 'BUY' else 'overvalued' if signal['signal'] == 'SELL' else 'fair'
-            signal_emoji = "🟢" if signal['signal'] == 'BUY' else "🔴" if signal['signal'] == 'SELL' else "🟡"
-            
-            st.markdown(f"""
-            <div class="signal-card {signal_class}">
-                <div class="label">MULTI-LOOKBACK SIGNAL</div>
-                <div class="value">{signal_emoji} {signal['signal']}</div>
-                <div class="subtext">{signal['strength']} Strength • {signal['confidence']} Confidence</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Conviction meter
-            conv_pct = (signal['conviction_score'] + 100) / 2  # 0-100 scale
-            conv_color = '#10b981' if signal['conviction_score'] < -20 else '#ef4444' if signal['conviction_score'] > 20 else '#FFC300'
-            
-            st.markdown(f"""
-            <div class="conviction-meter">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                    <span style="color: #10b981; font-size: 0.75rem;">OVERSOLD</span>
-                    <span style="color: #888; font-size: 0.75rem;">Conviction: {signal['conviction_score']:+.0f}</span>
-                    <span style="color: #ef4444; font-size: 0.75rem;">OVERBOUGHT</span>
-                </div>
-                <div class="conviction-bar">
-                    <div class="conviction-fill" style="width: {conv_pct}%; background: {conv_color};"></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Divergence alerts
-            if signal['has_bullish_div']:
-                st.markdown('<span class="status-badge buy">🔔 BULLISH DIVERGENCE DETECTED</span>', unsafe_allow_html=True)
-            if signal['has_bearish_div']:
-                st.markdown('<span class="status-badge sell">🔔 BEARISH DIVERGENCE DETECTED</span>', unsafe_allow_html=True)
-        
-        with col_right:
-            st.markdown("##### Lookback Breakdown")
-            
-            # Show each lookback's current status
-            for lb in osc.LOOKBACKS:
-                if lb not in osc.lookback_data:
-                    continue
-                z = osc.lookback_data[lb]['z_scores'][-1]
-                zone = osc.lookback_data[lb]['zones'][-1]
-                
-                zone_color = '#10b981' if 'Under' in zone else '#ef4444' if 'Over' in zone else '#888'
-                
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 0.5rem; border-bottom: 1px solid #2A2A2A;">
-                    <span style="color: #888;">{lb}-Day</span>
-                    <span style="color: {zone_color}; font-weight: 600;">{zone} ({z:+.2f}σ)</span>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # Price vs Fair Value chart
-        st.markdown("##### Actual vs Fair Value")
-        
-        fig = make_subplots(rows=2, cols=1, row_heights=[0.65, 0.35], shared_xaxes=True, vertical_spacing=0.05)
-        
-        fig.add_trace(go.Scatter(x=x_axis, y=ts_filtered['Actual'], mode='lines', name='Actual', line=dict(color='#FFC300', width=2)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=x_axis, y=ts_filtered['FairValue'], mode='lines', name='Fair Value', line=dict(color='#06b6d4', width=2, dash='dash')), row=1, col=1)
-        
-        # Residual
-        colors = ['#10b981' if r < 0 else '#ef4444' for r in ts_filtered['Residual']]
-        fig.add_trace(go.Bar(x=x_axis, y=ts_filtered['Residual'], name='Residual', marker_color=colors, showlegend=False), row=2, col=1)
-        fig.add_hline(y=0, line_color="#FFC300", line_width=1, row=2, col=1)
-        
-        fig.update_layout(height=450, legend=dict(orientation="h", yanchor="bottom", y=1.02))
-        update_chart_theme(fig)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TAB 2: ZONE TRENDS
-    # ═══════════════════════════════════════════════════════════════════════
-    with tab2:
-        st.markdown("##### Overbought / Oversold Breadth Over Time")
-        st.markdown('<p style="color: #888;">Shows what % of lookback periods are in oversold/overbought zones</p>', unsafe_allow_html=True)
-        
-        fig_zones = go.Figure()
-        
-        fig_zones.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['OversoldBreadth'], mode='lines', name='Oversold %',
-            fill='tozeroy', fillcolor='rgba(16, 185, 129, 0.3)', line=dict(color='#10b981', width=2)
-        ))
-        
-        fig_zones.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['OverboughtBreadth'], mode='lines', name='Overbought %',
-            fill='tozeroy', fillcolor='rgba(239, 68, 68, 0.3)', line=dict(color='#ef4444', width=2)
-        ))
-        
-        # Add threshold lines
-        fig_zones.add_hline(y=60, line_dash="dash", line_color="rgba(255,195,0,0.5)", annotation_text="60% Threshold")
-        fig_zones.add_hline(y=80, line_dash="dash", line_color="rgba(255,195,0,0.8)", annotation_text="80% High Conviction")
-        
-        fig_zones.update_layout(title="Zone Breadth", height=400, xaxis_title=x_title, yaxis_title="% of Lookbacks",
-                               yaxis=dict(range=[0, 105]))
-        update_chart_theme(fig_zones)
-        st.plotly_chart(fig_zones, use_container_width=True)
-        
-        st.markdown("---")
-        st.markdown("##### Extreme Zone Breadth")
-        
-        fig_extreme = go.Figure()
-        
-        fig_extreme.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['ExtremeOversold'], mode='lines', name='Extreme Oversold %',
-            fill='tozeroy', fillcolor='rgba(16, 185, 129, 0.5)', line=dict(color='#10b981', width=2)
-        ))
-        
-        fig_extreme.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['ExtremeOverbought'], mode='lines', name='Extreme Overbought %',
-            fill='tozeroy', fillcolor='rgba(239, 68, 68, 0.5)', line=dict(color='#ef4444', width=2)
-        ))
-        
-        fig_extreme.update_layout(title="Extreme Zones (±2σ)", height=300, xaxis_title=x_title, yaxis_title="%")
-        update_chart_theme(fig_extreme)
-        st.plotly_chart(fig_extreme, use_container_width=True)
-        
-        # Key insight
-        if ts['OversoldBreadth'].iloc[-1] > 60:
-            st.markdown(f"""
-            <div class="guide-box success">
-                <strong>🟢 High Oversold Breadth ({ts['OversoldBreadth'].iloc[-1]:.0f}%)</strong><br>
-                Multiple lookback periods agree on oversold conditions — historically a bullish setup.
-            </div>
-            """, unsafe_allow_html=True)
-        elif ts['OverboughtBreadth'].iloc[-1] > 60:
-            st.markdown(f"""
-            <div class="guide-box danger">
-                <strong>🔴 High Overbought Breadth ({ts['OverboughtBreadth'].iloc[-1]:.0f}%)</strong><br>
-                Multiple lookback periods agree on overbought conditions — historically a bearish setup.
-            </div>
-            """, unsafe_allow_html=True)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TAB 3: SIGNAL TRENDS
-    # ═══════════════════════════════════════════════════════════════════════
-    with tab3:
-        st.markdown("##### Buy / Sell Signal Generation Over Time")
-        st.markdown('<p style="color: #888;">Count of lookback periods generating signals at each point</p>', unsafe_allow_html=True)
-        
-        fig_signals = go.Figure()
-        
-        fig_signals.add_trace(go.Bar(
-            x=x_axis, y=ts_filtered['BuySignalBreadth'], name='Buy Signals',
-            marker=dict(color='#10b981')
-        ))
-        
-        fig_signals.add_trace(go.Bar(
-            x=x_axis, y=-ts_filtered['SellSignalBreadth'], name='Sell Signals',
-            marker=dict(color='#ef4444')
-        ))
-        
-        fig_signals.update_layout(title="Signal Count by Period", height=350, xaxis_title=x_title, yaxis_title="Signal Count",
-                                  barmode='relative')
-        update_chart_theme(fig_signals)
-        st.plotly_chart(fig_signals, use_container_width=True)
-        
-        st.markdown("---")
-        st.markdown("##### Divergence Signals Over Time")
-        
-        fig_div = go.Figure()
-        
-        fig_div.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['BullishDiv'].astype(int).cumsum(), mode='lines', name='Cumulative Bullish Div',
-            line=dict(color='#FFC300', width=2)
-        ))
-        
-        fig_div.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['BearishDiv'].astype(int).cumsum(), mode='lines', name='Cumulative Bearish Div',
-            line=dict(color='#06b6d4', width=2)
-        ))
-        
-        fig_div.update_layout(title="Cumulative Divergences", height=300, xaxis_title=x_title)
-        update_chart_theme(fig_div)
-        
-        # Signal stats
-        st.markdown("---")
-        st.markdown("##### Signal Statistics")
-        
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.markdown(f'<div class="metric-card success"><h4>Total Buy Signals</h4><h2>{regime_stats["total_buy_signals"]:.0f}</h2><div class="sub-metric">Across Lookbacks</div></div>', unsafe_allow_html=True)
-        with c2:
-            st.markdown(f'<div class="metric-card danger"><h4>Total Sell Signals</h4><h2>{regime_stats["total_sell_signals"]:.0f}</h2><div class="sub-metric">Across Lookbacks</div></div>', unsafe_allow_html=True)
-        with c3:
-            st.markdown(f'<div class="metric-card primary"><h4>Bullish Divergences</h4><h2>{regime_stats["total_bull_div"]}</h2><div class="sub-metric">Detected</div></div>', unsafe_allow_html=True)
-        with c4:
-            st.markdown(f'<div class="metric-card info"><h4>Bearish Divergences</h4><h2>{regime_stats["total_bear_div"]}</h2><div class="sub-metric">Detected</div></div>', unsafe_allow_html=True)
-        
-        # Performance analysis
-        st.markdown("---")
-        st.markdown("##### Signal Performance Analysis")
-        
-        perf = osc.get_signal_performance()
-        
-        perf_data = []
-        for period in [5, 10, 20]:
-            p = perf[period]
-            perf_data.append({
-                'Holding Period': f'{period} Days',
-                'Buy Hit Rate': f"{p['buy_hit']*100:.1f}%" if p['buy_count'] > 0 else 'N/A',
-                'Buy Avg Return': f"{p['buy_avg']:.2f}%" if p['buy_count'] > 0 else 'N/A',
-                'Buy Count': p['buy_count'],
-                'Sell Hit Rate': f"{p['sell_hit']*100:.1f}%" if p['sell_count'] > 0 else 'N/A',
-                'Sell Avg Return': f"{p['sell_avg']:.2f}%" if p['sell_count'] > 0 else 'N/A',
-                'Sell Count': p['sell_count'],
-            })
-        
-        st.dataframe(pd.DataFrame(perf_data), width='stretch', hide_index=True)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TAB 4: REGIME ANALYSIS
-    # ═══════════════════════════════════════════════════════════════════════
-    with tab4:
-        st.markdown("##### Conviction Score Over Time")
-        st.markdown('<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias</p>', unsafe_allow_html=True)
+    with tab_regime:
+        st.markdown("##### Kalman Conviction Score")
+        st.markdown('<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias · Shaded = 95% Kalman confidence band</p>', unsafe_allow_html=True)
         
         fig_conv = go.Figure()
         
+        # Confidence band
+        if 'ConvictionUpper' in ts_filtered.columns:
+            fig_conv.add_trace(go.Scatter(
+                x=x_axis, y=ts_filtered['ConvictionUpper'],
+                mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip',
+            ))
+            fig_conv.add_trace(go.Scatter(
+                x=x_axis, y=ts_filtered['ConvictionLower'],
+                mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip',
+                fill='tonexty', fillcolor='rgba(255,195,0,0.08)', name='95% Band',
+            ))
+        
+        # Positive/negative fills
         fig_conv.add_trace(go.Scatter(
             x=x_axis, y=ts_filtered['ConvictionScore'].clip(lower=0),
-            fill='tozeroy', fillcolor='rgba(239,68,68,0.15)',
-            line=dict(width=0), showlegend=False
+            fill='tozeroy', fillcolor='rgba(239,68,68,0.15)', line=dict(width=0), showlegend=False
         ))
-        
         fig_conv.add_trace(go.Scatter(
             x=x_axis, y=ts_filtered['ConvictionScore'].clip(upper=0),
-            fill='tozeroy', fillcolor='rgba(16,185,129,0.15)',
-            line=dict(width=0), showlegend=False
+            fill='tozeroy', fillcolor='rgba(16,185,129,0.15)', line=dict(width=0), showlegend=False
         ))
         
-        conv_colors = ['#10b981' if c < -40 else '#ef4444' if c > 40 else '#888' for c in ts_filtered['ConvictionScore']]
         fig_conv.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['ConvictionScore'], mode='lines+markers', name='Conviction',
-            line=dict(color='#FFC300', width=2), marker=dict(size=4, color=conv_colors)
+            x=x_axis, y=ts_filtered['ConvictionScore'], mode='lines', name='Conviction (Kalman)',
+            line=dict(color='#FFC300', width=2),
         ))
+        
+        # Raw conviction for comparison
+        if 'ConvictionRaw' in ts_filtered.columns:
+            fig_conv.add_trace(go.Scatter(
+                x=x_axis, y=ts_filtered['ConvictionRaw'], mode='lines', name='Raw Conviction',
+                line=dict(color='#555', width=1, dash='dot'), opacity=0.5,
+            ))
         
         fig_conv.add_hline(y=40, line_dash="dash", line_color="rgba(239,68,68,0.5)")
         fig_conv.add_hline(y=-40, line_dash="dash", line_color="rgba(16,185,129,0.5)")
         fig_conv.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
         
-        fig_conv.update_layout(title="Conviction Score", height=400, xaxis_title=x_title, yaxis_title="Score",
-                               yaxis=dict(range=[-100, 100]))
+        fig_conv.update_layout(title="Conviction Score (Kalman-Filtered)", height=400,
+                               xaxis_title=x_title, yaxis_title="Score", yaxis=dict(range=[-100, 100]))
         update_chart_theme(fig_conv)
         st.plotly_chart(fig_conv, use_container_width=True)
         
@@ -1422,29 +1306,20 @@ def main():
         
         with col1:
             st.markdown("##### Regime Distribution")
-            
             regime_data = {
                 "Regime": ["🟢 Strongly Oversold", "🔵 Oversold", "⚪ Neutral", "🟠 Overbought", "🔴 Strongly Overbought"],
-                "Count": [
-                    regime_stats['strongly_oversold'],
-                    regime_stats['oversold'],
-                    regime_stats['neutral'],
-                    regime_stats['overbought'],
-                    regime_stats['strongly_overbought']
-                ],
-                "Pct": [
-                    f"{regime_stats['strongly_oversold']/len(ts)*100:.1f}%",
-                    f"{regime_stats['oversold']/len(ts)*100:.1f}%",
-                    f"{regime_stats['neutral']/len(ts)*100:.1f}%",
-                    f"{regime_stats['overbought']/len(ts)*100:.1f}%",
-                    f"{regime_stats['strongly_overbought']/len(ts)*100:.1f}%"
-                ]
+                "Count": [regime_stats['strongly_oversold'], regime_stats['oversold'], regime_stats['neutral'],
+                          regime_stats['overbought'], regime_stats['strongly_overbought']],
+                "Pct": [f"{regime_stats['strongly_oversold'] / len(ts) * 100:.1f}%",
+                        f"{regime_stats['oversold'] / len(ts) * 100:.1f}%",
+                        f"{regime_stats['neutral'] / len(ts) * 100:.1f}%",
+                        f"{regime_stats['overbought'] / len(ts) * 100:.1f}%",
+                        f"{regime_stats['strongly_overbought'] / len(ts) * 100:.1f}%"]
             }
             st.dataframe(pd.DataFrame(regime_data), width='stretch', hide_index=True)
         
         with col2:
-            st.markdown("##### Current Regime Analysis")
-            
+            st.markdown("##### Current Regime & Diagnostics")
             curr_regime = signal['regime']
             regime_box_class = "success" if "OVERSOLD" in curr_regime else "danger" if "OVERBOUGHT" in curr_regime else ""
             
@@ -1457,50 +1332,227 @@ def main():
             </div>
             """, unsafe_allow_html=True)
             
-            st.markdown("##### Model Fit")
-            st.markdown(f"R²: **{model_stats['r2']:.4f}** | RMSE: **{model_stats['rmse']:.4f}**")
+            st.markdown("##### Model Diagnostics")
+            h_label = 'Mean-Reverting ✅' if signal['hurst'] < 0.45 else 'Trending ⚠️' if signal['hurst'] > 0.55 else 'Random Walk'
+            st.markdown(f"""
+            OOS R²: **{model_stats['r2_oos']:.4f}** | RMSE: **{model_stats['rmse_oos']:.4f}** | 
+            OU Half-Life: **{signal['ou_half_life']:.0f} days** | 
+            Hurst: **{signal['hurst']:.2f}** ({h_label}) |
+            Model Spread: **{model_stats['avg_model_spread']:.3f}**
+            """)
     
     # ═══════════════════════════════════════════════════════════════════════
-    # TAB 5: DATA TABLE
+    # TAB: SIGNAL DASHBOARD
     # ═══════════════════════════════════════════════════════════════════════
-    with tab5:
-        st.markdown(f"##### Filtered Time Series Data ({len(ts_filtered)} observations)")
+    with tab_signal:
+        col_left, col_right = st.columns([2, 1])
         
-        # Select columns
-        display_cols = ['Date', 'Actual', 'FairValue', 'Residual', 'AvgZ', 'OversoldBreadth', 'OverboughtBreadth', 
-                       'ConvictionScore', 'Regime', 'BullishDiv', 'BearishDiv']
+        with col_left:
+            st.markdown("##### Current Signal Analysis")
+            signal_class = 'undervalued' if signal['signal'] == 'BUY' else 'overvalued' if signal['signal'] == 'SELL' else 'fair'
+            signal_emoji = "🟢" if signal['signal'] == 'BUY' else "🔴" if signal['signal'] == 'SELL' else "🟡"
+            
+            st.markdown(f"""
+            <div class="signal-card {signal_class}">
+                <div class="label">WALK-FORWARD SIGNAL</div>
+                <div class="value">{signal_emoji} {signal['signal']}</div>
+                <div class="subtext">{signal['strength']} Strength • {signal['confidence']} Confidence • 
+                OU t½ = {signal['ou_half_life']:.0f}d</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            conv_pct = (signal['conviction_score'] + 100) / 2
+            conv_color = '#10b981' if signal['conviction_score'] < -20 else '#ef4444' if signal['conviction_score'] > 20 else '#FFC300'
+            
+            st.markdown(f"""
+            <div class="conviction-meter">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="color: #10b981; font-size: 0.75rem;">OVERSOLD</span>
+                    <span style="color: #888; font-size: 0.75rem;">Conviction: {signal['conviction_score']:+.0f} [{signal['conviction_lower']:+.0f}, {signal['conviction_upper']:+.0f}]</span>
+                    <span style="color: #ef4444; font-size: 0.75rem;">OVERBOUGHT</span>
+                </div>
+                <div class="conviction-bar">
+                    <div class="conviction-fill" style="width: {conv_pct}%; background: {conv_color};"></div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if signal['has_bullish_div']:
+                st.markdown('<span class="status-badge buy">🔔 BULLISH DIVERGENCE (Swing-Based)</span>', unsafe_allow_html=True)
+            if signal['has_bearish_div']:
+                st.markdown('<span class="status-badge sell">🔔 BEARISH DIVERGENCE (Swing-Based)</span>', unsafe_allow_html=True)
+            
+            # Model uncertainty warning
+            if signal['model_spread'] > 1.0:
+                st.markdown(f"""
+                <div style="background: rgba(245,158,11,0.1); border: 1px solid #f59e0b; border-radius: 8px; padding: 0.5rem 1rem; margin-top: 0.5rem;">
+                    <span style="color: #f59e0b; font-size: 0.8rem;">⚠️ High model disagreement ({signal['model_spread']:.2f}) — fair value estimate is uncertain. Signal confidence may be lower than indicated.</span>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        with col_right:
+            st.markdown("##### Lookback Breakdown")
+            for lb in engine.LOOKBACKS:
+                if lb not in engine.lookback_data:
+                    continue
+                z = engine.lookback_data[lb]['z_scores'][-1]
+                zone = engine.lookback_data[lb]['zones'][-1]
+                zone_color = '#10b981' if 'Under' in zone else '#ef4444' if 'Over' in zone else '#888'
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; padding: 0.5rem; border-bottom: 1px solid #2A2A2A;">
+                    <span style="color: #888;">{lb}-Day</span>
+                    <span style="color: {zone_color}; font-weight: 600;">{zone} ({z:+.2f}σ)</span>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Price vs Fair Value + OU projection
+        st.markdown("##### Actual vs Walk-Forward Fair Value")
+        
+        fig = make_subplots(rows=2, cols=1, row_heights=[0.6, 0.4], shared_xaxes=True, vertical_spacing=0.05)
+        
+        fig.add_trace(go.Scatter(x=x_axis, y=ts_filtered['Actual'], mode='lines', name='Actual',
+                                 line=dict(color='#FFC300', width=2)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=x_axis, y=ts_filtered['FairValue'], mode='lines', name='Fair Value (OOS)',
+                                 line=dict(color='#06b6d4', width=2, dash='dash')), row=1, col=1)
+        
+        # Model spread as uncertainty band
+        if 'ModelSpread' in ts_filtered.columns:
+            upper = ts_filtered['FairValue'] + ts_filtered['ModelSpread']
+            lower = ts_filtered['FairValue'] - ts_filtered['ModelSpread']
+            fig.add_trace(go.Scatter(x=x_axis, y=upper, mode='lines', line=dict(width=0),
+                                     showlegend=False, hoverinfo='skip'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=x_axis, y=lower, mode='lines', line=dict(width=0),
+                                     fill='tonexty', fillcolor='rgba(6,182,212,0.08)',
+                                     name='Model Uncertainty', hoverinfo='skip'), row=1, col=1)
+        
+        # Residual bar
+        colors = ['#10b981' if r < 0 else '#ef4444' for r in ts_filtered['Residual']]
+        fig.add_trace(go.Bar(x=x_axis, y=ts_filtered['Residual'], name='Residual (OOS)',
+                             marker_color=colors, showlegend=False), row=2, col=1)
+        fig.add_hline(y=0, line_color="#FFC300", line_width=1, row=2, col=1)
+        
+        # OU projection on residual pane
+        if hasattr(engine, 'ou_projection') and pd.api.types.is_datetime64_any_dtype(ts['Date']):
+            last_date = ts['Date'].iloc[-1]
+            proj_dates = pd.date_range(start=last_date, periods=91, freq='D')[1:]
+            fig.add_trace(go.Scatter(
+                x=proj_dates, y=engine.ou_projection,
+                mode='lines', name='OU Projection',
+                line=dict(color='#FFC300', width=1.5, dash='dot'), opacity=0.5,
+            ), row=2, col=1)
+        
+        fig.update_layout(height=500, legend=dict(orientation="h", yanchor="bottom", y=1.02))
+        fig.update_yaxes(title_text=active_target, row=1, col=1)
+        fig.update_yaxes(title_text="Residual", row=2, col=1)
+        update_chart_theme(fig)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB: ZONE TRENDS
+    # ═══════════════════════════════════════════════════════════════════════
+    with tab_zones:
+        st.markdown("##### Overbought / Oversold Breadth Over Time")
+        st.markdown('<p style="color: #888;">% of lookback periods in oversold/overbought zones</p>', unsafe_allow_html=True)
+        
+        fig_zones = go.Figure()
+        fig_zones.add_trace(go.Scatter(
+            x=x_axis, y=ts_filtered['OversoldBreadth'],
+            fill='tozeroy', fillcolor='rgba(16,185,129,0.2)',
+            line=dict(color='#10b981', width=2), name='Oversold %'
+        ))
+        fig_zones.add_trace(go.Scatter(
+            x=x_axis, y=ts_filtered['OverboughtBreadth'],
+            fill='tozeroy', fillcolor='rgba(239,68,68,0.2)',
+            line=dict(color='#ef4444', width=2), name='Overbought %'
+        ))
+        fig_zones.add_hline(y=60, line_dash="dash", line_color="rgba(255,195,0,0.3)")
+        fig_zones.update_layout(title="Zone Breadth", height=400, xaxis_title=x_title, yaxis_title="% of Lookbacks",
+                                yaxis=dict(range=[0, 100]))
+        update_chart_theme(fig_zones)
+        st.plotly_chart(fig_zones, use_container_width=True)
+        
+        st.markdown("---")
+        st.markdown("##### Average Z-Score Across Lookbacks")
+        
+        fig_z = go.Figure()
+        z_colors = ['#10b981' if z < -1 else '#ef4444' if z > 1 else '#888' for z in ts_filtered['AvgZ']]
+        fig_z.add_trace(go.Bar(x=x_axis, y=ts_filtered['AvgZ'], marker_color=z_colors, name='Avg Z'))
+        fig_z.add_hline(y=0, line_color="#FFC300", line_width=1)
+        fig_z.add_hline(y=2, line_dash="dash", line_color="rgba(239,68,68,0.5)")
+        fig_z.add_hline(y=-2, line_dash="dash", line_color="rgba(16,185,129,0.5)")
+        fig_z.update_layout(title="Multi-Lookback Average Z-Score", height=350, xaxis_title=x_title, yaxis_title="Z-Score")
+        update_chart_theme(fig_z)
+        st.plotly_chart(fig_z, use_container_width=True)
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB: SIGNAL TRENDS
+    # ═══════════════════════════════════════════════════════════════════════
+    with tab_signals:
+        st.markdown("##### Buy/Sell Signal Count by Period")
+        
+        fig_signals = go.Figure()
+        fig_signals.add_trace(go.Bar(
+            x=x_axis, y=ts_filtered['BuySignalBreadth'], name='Buy Signals',
+            marker=dict(color='#10b981')
+        ))
+        fig_signals.add_trace(go.Bar(
+            x=x_axis, y=-ts_filtered['SellSignalBreadth'], name='Sell Signals',
+            marker=dict(color='#ef4444')
+        ))
+        fig_signals.update_layout(title="Signal Count by Period", height=350, xaxis_title=x_title,
+                                  yaxis_title="Signal Count", barmode='relative')
+        update_chart_theme(fig_signals)
+        st.plotly_chart(fig_signals, use_container_width=True)
+        
+        st.markdown("---")
+        st.markdown("##### Signal Statistics")
+        
+        perf = engine.get_signal_performance()
+        perf_data = []
+        for period in [5, 10, 20]:
+            p = perf[period]
+            perf_data.append({
+                'Holding Period': f'{period} Days',
+                'Buy Hit Rate': f"{p['buy_hit'] * 100:.1f}%" if p['buy_count'] > 0 else 'N/A',
+                'Buy Avg Return': f"{p['buy_avg']:.2f}%" if p['buy_count'] > 0 else 'N/A',
+                'Buy Count': p['buy_count'],
+                'Sell Hit Rate': f"{p['sell_hit'] * 100:.1f}%" if p['sell_count'] > 0 else 'N/A',
+                'Sell Avg Return': f"{p['sell_avg']:.2f}%" if p['sell_count'] > 0 else 'N/A',
+                'Sell Count': p['sell_count'],
+            })
+        st.dataframe(pd.DataFrame(perf_data), width='stretch', hide_index=True)
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # TAB: DATA TABLE
+    # ═══════════════════════════════════════════════════════════════════════
+    with tab_data:
+        st.markdown(f"##### Time Series Data ({len(ts_filtered)} observations)")
+        
+        display_cols = ['Date', 'Actual', 'FairValue', 'Residual', 'ModelSpread', 'AvgZ',
+                        'OversoldBreadth', 'OverboughtBreadth', 'ConvictionScore', 'Regime',
+                        'BullishDiv', 'BearishDiv']
+        display_cols = [c for c in display_cols if c in ts_filtered.columns]
         
         display_ts = ts_filtered[display_cols].copy()
-        display_ts['Residual'] = display_ts['Residual'].round(4)
-        display_ts['AvgZ'] = display_ts['AvgZ'].round(3)
-        display_ts['FairValue'] = display_ts['FairValue'].round(2)
-        display_ts['OversoldBreadth'] = display_ts['OversoldBreadth'].round(1)
-        display_ts['OverboughtBreadth'] = display_ts['OverboughtBreadth'].round(1)
-        display_ts['ConvictionScore'] = display_ts['ConvictionScore'].round(1)
-        display_ts['BullishDiv'] = display_ts['BullishDiv'].apply(lambda x: '🟢' if x else '')
-        display_ts['BearishDiv'] = display_ts['BearishDiv'].apply(lambda x: '🔴' if x else '')
+        for col in ['Residual', 'ModelSpread', 'AvgZ', 'FairValue', 'ConvictionScore',
+                     'OversoldBreadth', 'OverboughtBreadth']:
+            if col in display_ts.columns:
+                display_ts[col] = display_ts[col].round(3 if col in ['AvgZ', 'ModelSpread'] else 2 if col == 'FairValue' else 1)
         
-        display_ts.columns = ['Date', 'Actual', 'Fair Value', 'Residual', 'Avg Z', 'Oversold %', 'Overbought %',
-                             'Conviction', 'Regime', 'Bull Div', 'Bear Div']
+        if 'BullishDiv' in display_ts.columns:
+            display_ts['BullishDiv'] = display_ts['BullishDiv'].apply(lambda x: '🟢' if x else '')
+        if 'BearishDiv' in display_ts.columns:
+            display_ts['BearishDiv'] = display_ts['BearishDiv'].apply(lambda x: '🔴' if x else '')
         
         st.dataframe(display_ts, width='stretch', hide_index=True, height=500)
         
         csv_data = ts.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Full CSV", csv_data, f"aarambh_{target_col}_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+        st.download_button("📥 Download Full CSV", csv_data,
+                           f"aarambh_{active_target}_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
     
-    # Footer
     render_footer()
-
-
-def render_footer():
-    """Render dynamic footer with IST time"""
-    from datetime import timezone
-    utc_now = datetime.now(timezone.utc)
-    ist_now = utc_now + timedelta(hours=5, minutes=30)
-    current_time_ist = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
-    
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.caption(f"© 2026 {PRODUCT_NAME} | {COMPANY} | {VERSION} | {current_time_ist}")
 
 
 if __name__ == "__main__":
