@@ -341,7 +341,7 @@ class FairValueEngine:
     """
     
     LOOKBACKS = [5, 10, 20, 50, 100]
-    MIN_TRAIN_SIZE = 20  # Minimum expanding window before first prediction
+    MIN_TRAIN_SIZE = 60  # Minimum expanding window before first prediction
     
     def __init__(self):
         self.scaler = StandardScaler() if SKLEARN_AVAILABLE else None
