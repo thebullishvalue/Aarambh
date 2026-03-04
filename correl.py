@@ -1372,6 +1372,40 @@ def main():
         st.plotly_chart(fig_conv, use_container_width=True)
         
         st.markdown("---")
+        st.markdown("##### Original Conviction Score (v1.1 Un-smoothed)")
+        st.markdown('<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias</p>', unsafe_allow_html=True)
+        
+        if 'ConvictionRaw' in ts_filtered.columns:
+            fig_raw = go.Figure()
+            
+            fig_raw.add_trace(go.Scatter(
+                x=x_axis, y=ts_filtered['ConvictionRaw'].clip(lower=0),
+                fill='tozeroy', fillcolor='rgba(239,68,68,0.15)',
+                line=dict(width=0), showlegend=False
+            ))
+            
+            fig_raw.add_trace(go.Scatter(
+                x=x_axis, y=ts_filtered['ConvictionRaw'].clip(upper=0),
+                fill='tozeroy', fillcolor='rgba(16,185,129,0.15)',
+                line=dict(width=0), showlegend=False
+            ))
+            
+            conv_colors = ['#10b981' if c < -40 else '#ef4444' if c > 40 else '#888' for c in ts_filtered['ConvictionRaw']]
+            fig_raw.add_trace(go.Scatter(
+                x=x_axis, y=ts_filtered['ConvictionRaw'], mode='lines+markers', name='Raw Conviction',
+                line=dict(color='#FFC300', width=2), marker=dict(size=4, color=conv_colors)
+            ))
+            
+            fig_raw.add_hline(y=40, line_dash="dash", line_color="rgba(239,68,68,0.5)")
+            fig_raw.add_hline(y=-40, line_dash="dash", line_color="rgba(16,185,129,0.5)")
+            fig_raw.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
+            
+            fig_raw.update_layout(title="Raw Conviction Score", height=400, xaxis_title=x_title, yaxis_title="Score",
+                                   yaxis=dict(range=[-100, 100]))
+            update_chart_theme(fig_raw)
+            st.plotly_chart(fig_raw, use_container_width=True)
+
+        st.markdown("---")
         
         col1, col2 = st.columns(2)
         
