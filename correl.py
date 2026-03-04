@@ -867,14 +867,15 @@ def load_google_sheet(sheet_url):
 
 
 def clean_data(df, target, features, date_col=None):
-    cols = [target] + features
+    features_list = list(features)  # Enforce list type to prevent tuple concatenation errors
+    cols = [target] + features_list
     if date_col and date_col != "None" and date_col in df.columns:
         cols.append(date_col)
     data = df[cols].copy()
-    for col in [target] + features:
+    for col in [target] + features_list:
         data[col] = pd.to_numeric(data[col], errors='coerce')
     data = data.dropna()
-    numeric_subset = data[[target] + features]
+    numeric_subset = data[[target] + features_list]
     is_finite = np.isfinite(numeric_subset).all(axis=1)
     data = data[is_finite]
     if date_col and date_col != "None" and date_col in data.columns:
@@ -1152,7 +1153,9 @@ def main():
     active_target = st.session_state.get('active_target', target_col)
     active_features = st.session_state.get('active_features', staging_features)
     active_date = st.session_state.get('active_date_col', date_col)
-    feature_cols = active_features
+    
+    # Explicitly cast to list to prevent list/tuple concatenation errors in clean_data
+    feature_cols = list(active_features)
     
     # ── Header ──────────────────────────────────────────────────────────
     st.markdown("""
