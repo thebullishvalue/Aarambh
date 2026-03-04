@@ -346,7 +346,7 @@ class FairValueEngine:
     def __init__(self):
         self.scaler = StandardScaler() if SKLEARN_AVAILABLE else None
     
-    def fit(self, X, y, feature_names=None):
+    def fit(self, X, y, feature_names=None, progress_callback=None):
         """Walk-forward fit: expanding window regression, then all analytics."""
         start_time = time.time()
         self.feature_names = feature_names or [f'X{i}' for i in range(X.shape[1])]
@@ -354,55 +354,73 @@ class FairValueEngine:
         self.y = y.copy()
         self.X = X.copy()
         
-        # ── Walk-Forward Regression ─────────────────────────────────────
-        # At each time T (T >= MIN_TRAIN_SIZE):
-        #   1. Fit ensemble on X[0:T], y[0:T]
-        #   2. Predict y[T] → fair_value[T]
-        #   3. residual[T] = y[T] - fair_value[T]
-        # For T < MIN_TRAIN_SIZE: use expanding mean as fair value
-        
         n = self.n_samples
         self.predictions = np.full(n, np.nan)
         self.model_spread = np.zeros(n)  # Std across model predictions (disagreement)
         
+        refit_step = 5  # Refit models weekly (every 5 steps) to significantly optimize performance
+        last_models = {'ridge': None, 'huber': None, 'ols': None}
+        current_scaler = None
+        
         for t in range(n):
+            if progress_callback and t % max(1, n // 20) == 0:
+                progress_callback(t / n, f"Walking forward: {t}/{n} data points...")
+                
             if t < self.MIN_TRAIN_SIZE:
                 # Not enough data for regression — use expanding mean
                 self.predictions[t] = np.mean(y[:t + 1])
                 self.model_spread[t] = 0.0
             else:
-                # Fit ensemble on [0..t), predict t
-                X_train = X[:t]
-                y_train = y[:t]
                 X_pred = X[t:t + 1]
-                
                 preds_at_t = []
                 
-                if SKLEARN_AVAILABLE and self.scaler is not None:
-                    scaler_t = StandardScaler()
-                    X_train_s = scaler_t.fit_transform(X_train)
-                    X_pred_s = scaler_t.transform(X_pred)
+                # Fit ensemble periodically instead of every single day to avoid extreme slowness
+                if t == self.MIN_TRAIN_SIZE or t % refit_step == 0:
+                    X_train = X[:t]
+                    y_train = y[:t]
                     
-                    try:
-                        ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=min(5, t // 5))
-                        ridge.fit(X_train_s, y_train)
-                        preds_at_t.append(ridge.predict(X_pred_s)[0])
-                    except Exception:
-                        pass
+                    if SKLEARN_AVAILABLE and self.scaler is not None:
+                        scaler_t = StandardScaler()
+                        X_train_s = scaler_t.fit_transform(X_train)
+                        current_scaler = scaler_t
+                        
+                        try:
+                            # Use cv=None for Generalized Cross-Validation (GCV) -> O(1) mathematical speedup
+                            ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=None)
+                            ridge.fit(X_train_s, y_train)
+                            last_models['ridge'] = ridge
+                        except Exception:
+                            last_models['ridge'] = None
+                        
+                        try:
+                            # Reduce max_iter for faster convergence
+                            huber = HuberRegressor(epsilon=1.35, max_iter=100)
+                            huber.fit(X_train_s, y_train)
+                            last_models['huber'] = huber
+                        except Exception:
+                            last_models['huber'] = None
                     
-                    try:
-                        huber = HuberRegressor(epsilon=1.35, max_iter=500)
-                        huber.fit(X_train_s, y_train)
-                        preds_at_t.append(huber.predict(X_pred_s)[0])
-                    except Exception:
-                        pass
+                    if STATSMODELS_AVAILABLE:
+                        try:
+                            # np.insert is much faster than statsmodels.add_constant inside a loop
+                            X_train_c = np.insert(X_train, 0, 1.0, axis=1)
+                            ols = sm.OLS(y_train, X_train_c).fit()
+                            last_models['ols'] = ols
+                        except Exception:
+                            last_models['ols'] = None
                 
-                if STATSMODELS_AVAILABLE:
+                # Predict Step (using latest models)
+                if SKLEARN_AVAILABLE and current_scaler is not None:
+                    X_pred_s = current_scaler.transform(X_pred)
+                    if last_models['ridge'] is not None:
+                        preds_at_t.append(last_models['ridge'].predict(X_pred_s)[0])
+                    if last_models['huber'] is not None:
+                        preds_at_t.append(last_models['huber'].predict(X_pred_s)[0])
+                
+                if STATSMODELS_AVAILABLE and last_models['ols'] is not None:
+                    X_pred_c = np.insert(X_pred, 0, 1.0, axis=1)
                     try:
-                        X_train_c = sm.add_constant(X_train)
-                        X_pred_c = sm.add_constant(X_pred)
-                        ols = sm.OLS(y_train, X_train_c).fit()
-                        preds_at_t.append(ols.predict(X_pred_c)[0])
+                        preds_at_t.append(last_models['ols'].predict(X_pred_c)[0])
                     except Exception:
                         pass
                 
@@ -413,6 +431,9 @@ class FairValueEngine:
                     self.predictions[t] = np.mean(y[:t + 1])
                     self.model_spread[t] = 0.0
         
+        if progress_callback:
+            progress_callback(1.0, "Computing multi-lookback signals...")
+            
         self.residuals = y - self.predictions
         
         # ── Final full-sample fit for model stats (OOS R² computed separately) ──
@@ -430,6 +451,10 @@ class FairValueEngine:
         
         elapsed = time.time() - start_time
         logging.info(f"v2.0 engine [{n} obs, {len(self.feature_names)} features] in {elapsed:.1f}s")
+        
+        if progress_callback:
+            progress_callback(1.0, "Done.")
+            
         return self
     
     def _compute_model_stats(self):
@@ -1022,62 +1047,95 @@ def main():
         return
     
     with st.sidebar:
-        st.markdown('<div class="sidebar-title">🎯 Model Configuration</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-title">🧠 Model Configuration</div>', unsafe_allow_html=True)
         
         default_target = "NIFTY50_PE" if "NIFTY50_PE" in numeric_cols else numeric_cols[0]
         default_preds = ["AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH", "IN10Y", "IN02Y",
                          "IN30Y", "INIRYY", "REPO", "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB"]
         
+        active_target_state = st.session_state.get('active_target', default_target)
+        if active_target_state not in numeric_cols:
+             active_target_state = numeric_cols[0]
+             
         target_col = st.selectbox("Target Variable", numeric_cols,
-                                  index=numeric_cols.index(default_target) if default_target in numeric_cols else 0)
+                                  index=numeric_cols.index(active_target_state))
         
+        date_candidates = [c for c in all_cols if 'date' in c.lower()]
+        default_date = date_candidates[0] if date_candidates else "None"
+        active_date_state = st.session_state.get('active_date_col', default_date)
+        if active_date_state not in (["None"] + all_cols):
+             active_date_state = "None"
+             
+        date_col = st.selectbox("Date Column", ["None"] + all_cols,
+                                index=(["None"] + all_cols).index(active_date_state))
+
         available = [c for c in numeric_cols if c != target_col]
         valid_defaults = [p for p in default_preds if p in available]
         
-        # Staging predictors — user plays freely, no compute
-        staging_features = st.multiselect("Predictors", available,
-                                          default=valid_defaults or available[:3])
+        # Initialize active predictors on first run
+        if 'active_features' not in st.session_state:
+            st.session_state['active_features'] = tuple(valid_defaults or available[:3])
         
-        if not staging_features:
-            st.info("👈 Select predictors")
-            render_footer()
-            return
-        
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        
-        st.markdown('<div class="sidebar-title">📅 Date Column</div>', unsafe_allow_html=True)
-        date_candidates = [c for c in all_cols if 'date' in c.lower()]
-        date_col = st.selectbox("Date", ["None"] + all_cols,
-                                index=all_cols.index(date_candidates[0]) + 1 if date_candidates else 0,
-                                label_visibility="collapsed")
-        
-        st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        
-        # ── Apply Button ────────────────────────────────────────────────
-        # Build the desired cache key from staging config
-        staging_key = f"{target_col}|{'|'.join(sorted(staging_features))}|{date_col}"
-        active_key = st.session_state.get('engine_cache', '')
-        has_changes = staging_key != active_key
-        
-        if has_changes:
-            st.caption(f"Pending config change — {len(staging_features)} predictors")
-        
-        apply_clicked = st.button(
-            "✅ Apply & Compute" if has_changes else "No changes",
-            use_container_width=True,
-            disabled=not has_changes,
-            type="primary" if has_changes else "secondary"
-        )
-        
-        if apply_clicked and has_changes:
-            st.session_state['active_target'] = target_col
-            st.session_state['active_features'] = staging_features
-            st.session_state['active_date_col'] = date_col
-            if 'engine' in st.session_state:
-                del st.session_state.engine
-            if 'engine_cache' in st.session_state:
-                del st.session_state.engine_cache
-            st.rerun()
+        with st.expander("Predictor Columns", expanded=False):
+            st.caption("Select predictors, then click Apply to recompute.")
+            
+            # Staging multiselect — user plays freely, no compute
+            staging_features = st.multiselect(
+                "Predictor Columns",
+                options=available,
+                default=[f for f in st.session_state['active_features'] if f in available],
+                label_visibility="collapsed",
+                help="These columns are used as predictors for walk-forward fair value regression."
+            )
+            
+            if not staging_features:
+                st.warning("⚠️ Select at least one predictor.")
+                staging_features = [f for f in st.session_state['active_features'] if f in available]
+            
+            # Show diff between staging and active
+            staging_set = set(staging_features)
+            active_set = set(st.session_state['active_features'])
+            has_pred_changes = staging_set != active_set
+            
+            # Also track target/date changes
+            has_other_changes = (target_col != active_target_state) or (date_col != active_date_state)
+            has_changes = has_pred_changes or has_other_changes
+            
+            if has_pred_changes:
+                added = staging_set - active_set
+                removed = active_set - staging_set
+                changes = []
+                if added:
+                    changes.append(f"+{len(added)} added")
+                if removed:
+                    changes.append(f"−{len(removed)} removed")
+                st.caption(f"Pending: {', '.join(changes)}")
+            elif has_other_changes:
+                st.caption("Pending: Target/Date changes")
+            
+            # Apply button — only this triggers recomputation
+            apply_clicked = st.button(
+                "✅ Apply Configuration" if has_changes else "No changes",
+                use_container_width=True,
+                disabled=not has_changes,
+                type="primary" if has_changes else "secondary"
+            )
+            
+            if apply_clicked and has_changes:
+                st.session_state['active_target'] = target_col
+                st.session_state['active_features'] = tuple(staging_features)
+                st.session_state['active_date_col'] = date_col
+                
+                if 'engine' in st.session_state:
+                    del st.session_state.engine
+                if 'engine_cache' in st.session_state:
+                    del st.session_state.engine_cache
+                st.rerun()
+            
+            active_count = len(st.session_state['active_features'])
+            total_count = len(available)
+            if active_count != total_count:
+                st.info(f"Active: {active_count}/{total_count} predictors")
         
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         st.markdown(f"""
@@ -1140,11 +1198,21 @@ def main():
     cache_key = f"{active_target}|{'|'.join(sorted(feature_cols))}|{len(data)}"
     
     if 'engine_cache' not in st.session_state or st.session_state.engine_cache != cache_key:
-        with st.spinner("Running walk-forward regression..."):
+        with st.spinner("Preparing walk-forward engine..."):
+            
+            # Interactive Progress Tracker to eliminate the frozen UI feeling
+            progress_bar = st.progress(0, text="Initializing engine...")
+            
+            def update_progress(frac, text):
+                progress_bar.progress(frac, text=text)
+            
             engine = FairValueEngine()
-            engine.fit(X, y, feature_names=feature_cols)
+            engine.fit(X, y, feature_names=feature_cols, progress_callback=update_progress)
+            
             st.session_state.engine = engine
             st.session_state.engine_cache = cache_key
+            
+            progress_bar.empty()
     
     engine = st.session_state.engine
     signal = engine.get_current_signal()
