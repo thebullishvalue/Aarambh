@@ -341,7 +341,7 @@ class FairValueEngine:
     """
     
     LOOKBACKS = [5, 10, 20, 50, 100]
-    MIN_TRAIN_SIZE = 60  # Minimum expanding window before first prediction
+    MIN_TRAIN_SIZE = 20  # Minimum expanding window before first prediction
     
     def __init__(self):
         self.scaler = StandardScaler() if SKLEARN_AVAILABLE else None
@@ -1116,8 +1116,8 @@ def main():
             
             # Apply button — only this triggers recomputation
             apply_clicked = st.button(
-                "✅ Apply " if has_changes else "No changes",
-                use_container_width=True,
+                "✅ Apply Configuration" if has_changes else "No changes",
+                width=True,
                 disabled=not has_changes,
                 type="primary" if has_changes else "secondary"
             )
@@ -1369,10 +1369,10 @@ def main():
         fig_conv.update_layout(title="Conviction Score (Kalman-Filtered)", height=400,
                                xaxis_title=x_title, yaxis_title="Score", yaxis=dict(range=[-100, 100]))
         update_chart_theme(fig_conv)
-        st.plotly_chart(fig_conv, use_container_width=True)
+        st.plotly_chart(fig_conv, width=True)
         
         st.markdown("---")
-        st.markdown("##### Raw Conviction Score")
+        st.markdown("##### Base Conviction Score")
         st.markdown('<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias</p>', unsafe_allow_html=True)
         
         if 'ConvictionRaw' in ts_filtered.columns:
@@ -1400,10 +1400,10 @@ def main():
             fig_raw.add_hline(y=-40, line_dash="dash", line_color="rgba(16,185,129,0.5)")
             fig_raw.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
             
-            fig_raw.update_layout(title="Raw Conviction Score", height=400, xaxis_title=x_title, yaxis_title="Score",
+            fig_raw.update_layout(title="Base Conviction Score", height=400, xaxis_title=x_title, yaxis_title="Score",
                                    yaxis=dict(range=[-100, 100]))
             update_chart_theme(fig_raw)
-            st.plotly_chart(fig_raw, use_container_width=True)
+            st.plotly_chart(fig_raw, width=True)
 
         st.markdown("---")
         
@@ -1552,7 +1552,7 @@ def main():
         fig.update_yaxes(title_text=active_target, row=1, col=1)
         fig.update_yaxes(title_text="Residual", row=2, col=1)
         update_chart_theme(fig)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width=True)
     
     # ═══════════════════════════════════════════════════════════════════════
     # TAB: ZONE TRENDS
@@ -1576,7 +1576,7 @@ def main():
         fig_zones.update_layout(title="Zone Breadth", height=400, xaxis_title=x_title, yaxis_title="% of Lookbacks",
                                 yaxis=dict(range=[0, 100]))
         update_chart_theme(fig_zones)
-        st.plotly_chart(fig_zones, use_container_width=True)
+        st.plotly_chart(fig_zones, width=True)
         
         st.markdown("---")
         st.markdown("##### Average Z-Score Across Lookbacks")
@@ -1589,7 +1589,7 @@ def main():
         fig_z.add_hline(y=-2, line_dash="dash", line_color="rgba(16,185,129,0.5)")
         fig_z.update_layout(title="Multi-Lookback Average Z-Score", height=350, xaxis_title=x_title, yaxis_title="Z-Score")
         update_chart_theme(fig_z)
-        st.plotly_chart(fig_z, use_container_width=True)
+        st.plotly_chart(fig_z, width=True)
     
     # ═══════════════════════════════════════════════════════════════════════
     # TAB: SIGNAL TRENDS
@@ -1609,7 +1609,7 @@ def main():
         fig_signals.update_layout(title="Signal Count by Period", height=350, xaxis_title=x_title,
                                   yaxis_title="Signal Count", barmode='relative')
         update_chart_theme(fig_signals)
-        st.plotly_chart(fig_signals, use_container_width=True)
+        st.plotly_chart(fig_signals, width=True)
         
         st.markdown("---")
         st.markdown("##### Signal Statistics")
