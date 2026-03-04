@@ -1372,7 +1372,7 @@ def main():
         st.plotly_chart(fig_conv, use_container_width=True)
         
         st.markdown("---")
-        st.markdown("##### Original Conviction Score (v1.1 Un-smoothed)")
+        st.markdown("##### Base Conviction Score")
         st.markdown('<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias</p>', unsafe_allow_html=True)
         
         if 'ConvictionRaw' in ts_filtered.columns:
@@ -1400,7 +1400,7 @@ def main():
             fig_raw.add_hline(y=-40, line_dash="dash", line_color="rgba(16,185,129,0.5)")
             fig_raw.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
             
-            fig_raw.update_layout(title="Raw Conviction Score", height=400, xaxis_title=x_title, yaxis_title="Score",
+            fig_raw.update_layout(title="Base Conviction Score", height=400, xaxis_title=x_title, yaxis_title="Score",
                                    yaxis=dict(range=[-100, 100]))
             update_chart_theme(fig_raw)
             st.plotly_chart(fig_raw, use_container_width=True)
