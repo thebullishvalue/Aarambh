@@ -1,73 +1,137 @@
 # -*- coding: utf-8 -*-
 """
-AARAMBH (आरंभ) v2.0 - Fair Value Breadth | A Hemrek Capital Product
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Walk-Forward Valuation · OU Mean-Reversion · Kalman-Filtered Conviction
-Multi-timeframe breadth analysis for market reversals.
+AARAMBH (आरंभ) v2.0 — Fair Value Breadth
+A Hemrek Capital Product
 
-v2.0 Changes from v1.1:
-  1. Walk-forward (expanding window) regression — no look-ahead bias
-  2. OU estimation on residuals — half-life, forward projection
-  3. Kalman smoothing on conviction — adaptive noise filtering + confidence bands
-  4. Model disagreement metric — ensemble uncertainty quantification
-  5. Residual Hurst exponent — empirical mean-reversion validation
-  6. Apply button for predictors — staging → commit pattern
-  7. Data staleness warning
-  8. Improved divergence detection — swing-based, not point-to-point
+Walk-forward valuation analysis for market reversals.
+Out-of-sample ensemble fair value modeling, OU mean-reversion physics,
+and Kalman-filtered breadth conviction scoring.
+
+Architecture:
+    1. Mathematical Primitives   — OU estimation, Kalman filter, Hurst exponent
+    2. FairValueEngine           — Walk-forward regression + all downstream analytics
+    3. Data Utilities            — Loading, cleaning, chart theming
+    4. UI Rendering              — Landing page, dashboard sections, footer
+    5. Main Application          — Sidebar config, engine orchestration, tab layout
 """
 
-import streamlit as st
-import pandas as pd
+from __future__ import annotations
+
+import logging
+import re
+import time
+import warnings
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
 from plotly.subplots import make_subplots
 from scipy import stats
 from scipy.signal import argrelextrema
-from datetime import datetime, timedelta
-import logging
-import warnings
-import time
 
-warnings.filterwarnings('ignore')
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# ── Dependencies ────────────────────────────────────────────────────────────
+# ── Optional Dependencies ────────────────────────────────────────────────────
+
 try:
     import statsmodels.api as sm
-    STATSMODELS_AVAILABLE = True
+
+    _HAS_STATSMODELS = True
 except ImportError:
     sm = None
-    STATSMODELS_AVAILABLE = False
+    _HAS_STATSMODELS = False
 
 try:
-    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-    from sklearn.linear_model import RidgeCV, HuberRegressor
+    from sklearn.linear_model import HuberRegressor, RidgeCV
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
     from sklearn.preprocessing import StandardScaler
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
 
-# ── Constants ───────────────────────────────────────────────────────────────
+    _HAS_SKLEARN = True
+except ImportError:
+    _HAS_SKLEARN = False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONSTANTS
+# ══════════════════════════════════════════════════════════════════════════════
+
 VERSION = "v2.0.0"
 PRODUCT_NAME = "Aarambh"
 COMPANY = "Hemrek Capital"
 
-# ── Page Config ─────────────────────────────────────────────────────────────
+# Engine defaults
+LOOKBACK_WINDOWS = (5, 10, 20, 50, 100)
+MIN_TRAIN_SIZE = 20
+REFIT_INTERVAL = 5
+RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
+HUBER_EPSILON = 1.35
+HUBER_MAX_ITER = 100
+OU_PROJECTION_DAYS = 90
+MIN_DATA_POINTS = 80
+
+# Signal thresholds (conviction score → signal mapping)
+CONVICTION_STRONG = 60
+CONVICTION_MODERATE = 40
+CONVICTION_WEAK = 20
+
+# Z-score zone boundaries
+Z_EXTREME = 2.0
+Z_THRESHOLD = 1.0
+
+# Staleness
+STALENESS_DAYS = 3
+
+# Timeframe filter mapping (trading days)
+TIMEFRAME_TRADING_DAYS = {"1M": 21, "6M": 126, "1Y": 252, "2Y": 504}
+
+# Default predictors for NIFTY50 use case
+DEFAULT_PREDICTORS = (
+    "AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH",
+    "IN10Y", "IN02Y", "IN30Y", "INIRYY", "REPO",
+    "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB",
+)
+
+# Default Google Sheets URL
+DEFAULT_SHEET_URL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1po7z42n3dYIQGAvn0D1-a4pmyxpnGPQ13TrNi3DB5_c/"
+    "edit?gid=1938234952#gid=1938234952"
+)
+
+# Chart theme
+CHART_BG = "#1A1A1A"
+CHART_GRID = "#2A2A2A"
+CHART_ZEROLINE = "#3A3A3A"
+CHART_FONT_COLOR = "#EAEAEA"
+
+# Signal colors
+COLOR_GREEN = "#10b981"
+COLOR_RED = "#ef4444"
+COLOR_GOLD = "#FFC300"
+COLOR_CYAN = "#06b6d4"
+COLOR_AMBER = "#f59e0b"
+COLOR_MUTED = "#888888"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE CONFIG & CSS
+# ══════════════════════════════════════════════════════════════════════════════
+
 st.set_page_config(
     page_title="AARAMBH | Fair Value Breadth",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CSS (Hemrek Design System — shared with Arthagati, Nirnay, Pragyam)
-# ══════════════════════════════════════════════════════════════════════════════
 
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-    
+
     :root {
         --primary-color: #FFC300;
         --primary-rgb: 255, 195, 0;
@@ -87,13 +151,13 @@ st.markdown("""
         --purple: #8b5cf6;
         --neutral: #888888;
     }
-    
+
     * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
     .main, [data-testid="stSidebar"] { background-color: var(--background-color); color: var(--text-primary); }
     .stApp > header { background-color: transparent; }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     .block-container { padding-top: 3.5rem; max-width: 90%; padding-left: 2rem; padding-right: 2rem; }
-    
+
     [data-testid="collapsedControl"] {
         display: flex !important; visibility: visible !important; opacity: 1 !important;
         background-color: var(--secondary-background-color) !important;
@@ -113,7 +177,7 @@ st.markdown("""
     [data-testid="stSidebar"] button[kind="header"] { background-color: transparent !important; border: none !important; }
     [data-testid="stSidebar"] button[kind="header"] svg { stroke: var(--primary-color) !important; }
     button[kind="header"] { z-index: 999999 !important; }
-    
+
     .premium-header {
         background: var(--secondary-background-color); padding: 1.25rem 2rem; border-radius: 16px;
         margin-bottom: 1.5rem; box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.1);
@@ -126,7 +190,7 @@ st.markdown("""
     }
     .premium-header h1 { margin: 0; font-size: 2rem; font-weight: 700; color: var(--text-primary); letter-spacing: -0.50px; position: relative; }
     .premium-header .tagline { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem; font-weight: 400; position: relative; }
-    
+
     .metric-card {
         background-color: var(--bg-card); padding: 1.25rem; border-radius: 12px;
         border: 1px solid var(--border-color); box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
@@ -162,7 +226,7 @@ st.markdown("""
     .guide-box { background: rgba(var(--primary-rgb), 0.05); border-left: 3px solid var(--primary-color); padding: 1rem; border-radius: 8px; margin: 1rem 0; color: var(--text-secondary); font-size: 0.9rem; }
     .guide-box.success { background: rgba(16, 185, 129, 0.05); border-left-color: var(--success-green); }
     .guide-box.danger { background: rgba(239, 68, 68, 0.05); border-left-color: var(--danger-red); }
-    
+
     .info-box { background: var(--secondary-background-color); border: 1px solid var(--border-color); padding: 1.25rem; border-radius: 12px; margin: 0.5rem 0; box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08); }
     .info-box h4 { color: var(--primary-color); margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 700; }
     .info-box p { color: var(--text-muted); margin: 0; font-size: 0.9rem; line-height: 1.6; }
@@ -172,7 +236,7 @@ st.markdown("""
     .conviction-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
 
     .section-divider { height: 1px; background: linear-gradient(90deg, transparent 0%, var(--border-color) 50%, transparent 100%); margin: 1.5rem 0; }
-    
+
     .status-badge { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.8rem; border-radius: 20px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
     .status-badge.buy { background: rgba(16, 185, 129, 0.15); color: var(--success-green); border: 1px solid rgba(16, 185, 129, 0.3); }
     .status-badge.sell { background: rgba(239, 68, 68, 0.15); color: var(--danger-red); border: 1px solid rgba(239, 68, 68, 0.3); }
@@ -180,11 +244,11 @@ st.markdown("""
 
     .stButton>button { border: 2px solid var(--primary-color); background: transparent; color: var(--primary-color); font-weight: 700; border-radius: 12px; padding: 0.75rem 2rem; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); text-transform: uppercase; letter-spacing: 0.5px; }
     .stButton>button:hover { box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6); background: var(--primary-color); color: #1A1A1A; transform: translateY(-2px); }
-    
+
     .stTabs [data-baseweb="tab-list"] { gap: 24px; background: transparent; }
     .stTabs [data-baseweb="tab"] { color: var(--text-muted); border-bottom: 2px solid transparent; background: transparent; font-weight: 600; }
     .stTabs [aria-selected="true"] { color: var(--primary-color); border-bottom: 2px solid var(--primary-color); background: transparent !important; }
-    
+
     .stPlotlyChart { border-radius: 12px; background-color: var(--secondary-background-color); padding: 10px; border: 1px solid var(--border-color); box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.1); }
     .stDataFrame { border-radius: 12px; background-color: var(--secondary-background-color); border: 1px solid var(--border-color); }
     .sidebar-title { font-size: 0.75rem; font-weight: 700; color: var(--primary-color); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.75rem; }
@@ -199,74 +263,87 @@ st.markdown("""
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MATHEMATICAL PRIMITIVES (shared theory base with Arthagati v2.1)
+# MATHEMATICAL PRIMITIVES
 # ══════════════════════════════════════════════════════════════════════════════
 
-def ornstein_uhlenbeck_estimate(series, dt=1.0):
-    """
-    Estimate OU parameters from residual series: dx = θ(μ−x)dt + σdW.
-    Returns: (theta, mu, sigma)
-    Used in: residual half-life, forward projection, normalization.
+def ornstein_uhlenbeck_estimate(
+    series: np.ndarray,
+    dt: float = 1.0,
+) -> tuple[float, float, float]:
+    """Estimate OU process parameters via AR(1) regression.
+
+    Model: dx = θ(μ − x)dt + σdW
+
+    Returns:
+        (theta, mu, sigma) — mean-reversion speed, equilibrium level, volatility.
     """
     x = np.asarray(series, dtype=np.float64)
     x = x[np.isfinite(x)]
+
     if len(x) < 20:
-        return 0.05, 0.0, max(np.std(x), 1e-6) if len(x) > 1 else (0.05, 0.0, 1.0)
-    
+        if len(x) > 1:
+            return 0.05, 0.0, max(float(np.std(x)), 1e-6)
+        return 0.05, 0.0, 1.0
+
     x_lag = x[:-1]
     x_curr = x[1:]
     n = len(x_lag)
-    
+
     sx = np.sum(x_lag)
     sy = np.sum(x_curr)
     sxx = np.sum(x_lag ** 2)
     sxy = np.sum(x_lag * x_curr)
-    syy = np.sum(x_curr ** 2)
-    
+
     denom = n * sxx - sx ** 2
     if abs(denom) < 1e-12:
-        return 0.05, np.mean(x), max(np.std(x), 1e-6)
-    
+        return 0.05, float(np.mean(x)), max(float(np.std(x)), 1e-6)
+
     a = (n * sxy - sx * sy) / denom
     b = (sy * sxx - sx * sxy) / denom
-    
     a = np.clip(a, 1e-6, 1.0 - 1e-6)
-    
+
     theta = -np.log(a) / dt
     mu = b / (1 - a)
-    
+
     residuals = x_curr - a * x_lag - b
     sigma_sq = np.var(residuals)
     sigma = np.sqrt(max(sigma_sq * 2 * theta / (1 - a ** 2), 1e-12))
-    
-    return max(theta, 1e-4), mu, max(sigma, 1e-6)
+
+    return max(float(theta), 1e-4), float(mu), max(float(sigma), 1e-6)
 
 
-def kalman_filter_1d(observations, process_var=None, measurement_var=None):
-    """
-    1D Kalman filter for conviction smoothing.
-    Returns: (filtered_state, kalman_gains, estimate_variances)
+def kalman_filter_1d(
+    observations: np.ndarray,
+    process_var: float | None = None,
+    measurement_var: float | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """1D Kalman filter for smoothing noisy time series.
+
+    Returns:
+        (filtered_state, kalman_gains, estimate_variances)
     """
     obs = np.asarray(observations, dtype=np.float64)
     n = len(obs)
     if n == 0:
         return np.array([]), np.array([]), np.array([])
-    
+
+    finite_obs = obs[np.isfinite(obs)]
+
     if process_var is None:
-        diffs = np.diff(obs[np.isfinite(obs)])
-        process_var = max(np.var(diffs) * 0.1, 1e-8) if len(diffs) > 1 else 1e-3
+        diffs = np.diff(finite_obs)
+        process_var = max(float(np.var(diffs)) * 0.1, 1e-8) if len(diffs) > 1 else 1e-3
     if measurement_var is None:
-        clean = obs[np.isfinite(obs)]
-        measurement_var = max(np.var(clean) * 0.5, 1e-8) if len(clean) > 1 else 1.0
-    
-    state = obs[0] if np.isfinite(obs[0]) else 0.0
+        measurement_var = max(float(np.var(finite_obs)) * 0.5, 1e-8) if len(finite_obs) > 1 else 1.0
+
+    state = float(obs[0]) if np.isfinite(obs[0]) else 0.0
     estimate_var = measurement_var
+
     filtered = np.zeros(n)
     gains = np.zeros(n)
     variances = np.zeros(n)
     filtered[0] = state
     variances[0] = estimate_var
-    
+
     for i in range(1, n):
         pred_var = estimate_var + process_var
         if np.isfinite(obs[i]):
@@ -278,587 +355,624 @@ def kalman_filter_1d(observations, process_var=None, measurement_var=None):
             estimate_var = pred_var
         filtered[i] = state
         variances[i] = estimate_var
-    
+
     return filtered, gains, variances
 
 
-def hurst_rs(series, max_lag=None):
-    """Hurst exponent via Rescaled Range (R/S) analysis."""
+def hurst_rs(series: np.ndarray, max_lag: int | None = None) -> float:
+    """Hurst exponent via Rescaled Range (R/S) analysis.
+
+    Returns:
+        H < 0.5 → mean-reverting, H ≈ 0.5 → random walk, H > 0.5 → trending.
+    """
     x = np.asarray(series, dtype=np.float64)
     x = x[np.isfinite(x)]
     n = len(x)
     if n < 20:
         return 0.5
-    
+
     if max_lag is None:
         max_lag = min(n // 2, 100)
-    
-    lags = []
-    rs_values = []
-    
+
+    lags: list[int] = []
+    rs_values: list[float] = []
+
     for lag in range(10, max_lag + 1, max(1, max_lag // 20)):
-        rs_list = []
+        rs_list: list[float] = []
         for start in range(0, n - lag, lag):
-            segment = x[start:start + lag]
+            segment = x[start : start + lag]
             if len(segment) < 10:
                 continue
             mean_seg = np.mean(segment)
             dev = np.cumsum(segment - mean_seg)
-            R = np.max(dev) - np.min(dev)
-            S = np.std(segment, ddof=1)
+            R = float(np.max(dev) - np.min(dev))
+            S = float(np.std(segment, ddof=1))
             if S > 1e-10:
                 rs_list.append(R / S)
-        
+
         if rs_list:
             lags.append(lag)
-            rs_values.append(np.mean(rs_list))
-    
+            rs_values.append(float(np.mean(rs_list)))
+
     if len(lags) < 3:
         return 0.5
-    
-    log_lags = np.log(lags)
-    log_rs = np.log(rs_values)
-    
-    slope, _, _, _, _ = stats.linregress(log_lags, log_rs)
-    return np.clip(slope, 0.01, 0.99)
+
+    slope, _, _, _, _ = stats.linregress(np.log(lags), np.log(rs_values))
+    return float(np.clip(slope, 0.01, 0.99))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FAIR VALUE BREADTH ENGINE v2.0
+# FAIR VALUE BREADTH ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
 
 class FairValueEngine:
+    """Walk-forward fair value engine with multi-lookback breadth analytics.
+
+    Pipeline:
+        1. Expanding-window ensemble regression (Ridge + Huber + OLS)
+        2. Multi-lookback z-score computation and zone classification
+        3. Breadth aggregation and raw conviction scoring
+        4. Kalman filtering of conviction with confidence bands
+        5. OU estimation on residuals for half-life and forward projection
+        6. Hurst exponent for mean-reversion validation
+        7. Swing-based divergence detection
+        8. Forward change analysis for signal performance
     """
-    v2.0 Fair Value Breadth Engine.
-    
-    Key changes from v1.1:
-      1. Walk-forward regression: at each time T, fit only on [0..T), predict T
-      2. OU estimation on out-of-sample residuals
-      3. Kalman-filtered conviction with confidence bands
-      4. Model disagreement (ensemble spread) as uncertainty metric
-      5. Residual Hurst exponent for mean-reversion validation
-      6. Swing-based divergence detection
-    """
-    
-    LOOKBACKS = [5, 10, 20, 50, 100]
-    MIN_TRAIN_SIZE = 20  # Minimum expanding window before first prediction
-    
-    def __init__(self):
-        self.scaler = StandardScaler() if SKLEARN_AVAILABLE else None
-    
-    def fit(self, X, y, feature_names=None, progress_callback=None):
-        """Walk-forward fit: expanding window regression, then all analytics."""
+
+    def __init__(self) -> None:
+        self.ts_data: pd.DataFrame = pd.DataFrame()
+        self.lookback_data: dict = {}
+        self.model_stats: dict = {}
+        self.ou_params: dict = {}
+        self.ou_projection: np.ndarray = np.array([])
+        self.pivots: dict = {}
+        self.residual_stats: dict = {}
+        self.hurst: float = 0.5
+
+    # ── Public API ────────────────────────────────────────────────────────
+
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        feature_names: list[str] | None = None,
+        progress_callback=None,
+    ) -> FairValueEngine:
+        """Run the full walk-forward pipeline."""
         start_time = time.time()
-        self.feature_names = feature_names or [f'X{i}' for i in range(X.shape[1])]
+
+        self.feature_names = feature_names or [f"X{i}" for i in range(X.shape[1])]
         self.n_samples = len(y)
         self.y = y.copy()
         self.X = X.copy()
-        
-        n = self.n_samples
-        self.predictions = np.full(n, np.nan)
-        self.model_spread = np.zeros(n)  # Std across model predictions (disagreement)
-        
-        refit_step = 5  # Refit models weekly (every 5 steps) to significantly optimize performance
-        last_models = {'ridge': None, 'huber': None, 'ols': None}
-        current_scaler = None
-        
-        for t in range(n):
-            if progress_callback and t % max(1, n // 20) == 0:
-                progress_callback(t / n, f"Walking forward: {t}/{n} data points...")
-                
-            if t < self.MIN_TRAIN_SIZE:
-                # Not enough data for regression — use expanding mean
-                self.predictions[t] = np.mean(y[:t + 1])
-                self.model_spread[t] = 0.0
-            else:
-                X_pred = X[t:t + 1]
-                preds_at_t = []
-                
-                # Fit ensemble periodically instead of every single day to avoid extreme slowness
-                if t == self.MIN_TRAIN_SIZE or t % refit_step == 0:
-                    X_train = X[:t]
-                    y_train = y[:t]
-                    
-                    if SKLEARN_AVAILABLE and self.scaler is not None:
-                        scaler_t = StandardScaler()
-                        X_train_s = scaler_t.fit_transform(X_train)
-                        current_scaler = scaler_t
-                        
-                        try:
-                            # Use cv=None for Generalized Cross-Validation (GCV) -> O(1) mathematical speedup
-                            ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=None)
-                            ridge.fit(X_train_s, y_train)
-                            last_models['ridge'] = ridge
-                        except Exception:
-                            last_models['ridge'] = None
-                        
-                        try:
-                            # Reduce max_iter for faster convergence
-                            huber = HuberRegressor(epsilon=1.35, max_iter=100)
-                            huber.fit(X_train_s, y_train)
-                            last_models['huber'] = huber
-                        except Exception:
-                            last_models['huber'] = None
-                    
-                    if STATSMODELS_AVAILABLE:
-                        try:
-                            # np.insert is much faster than statsmodels.add_constant inside a loop
-                            X_train_c = np.insert(X_train, 0, 1.0, axis=1)
-                            ols = sm.OLS(y_train, X_train_c).fit()
-                            last_models['ols'] = ols
-                        except Exception:
-                            last_models['ols'] = None
-                
-                # Predict Step (using latest models)
-                if SKLEARN_AVAILABLE and current_scaler is not None:
-                    X_pred_s = current_scaler.transform(X_pred)
-                    if last_models['ridge'] is not None:
-                        preds_at_t.append(last_models['ridge'].predict(X_pred_s)[0])
-                    if last_models['huber'] is not None:
-                        preds_at_t.append(last_models['huber'].predict(X_pred_s)[0])
-                
-                if STATSMODELS_AVAILABLE and last_models['ols'] is not None:
-                    X_pred_c = np.insert(X_pred, 0, 1.0, axis=1)
-                    try:
-                        preds_at_t.append(last_models['ols'].predict(X_pred_c)[0])
-                    except Exception:
-                        pass
-                
-                if preds_at_t:
-                    self.predictions[t] = np.mean(preds_at_t)
-                    self.model_spread[t] = np.std(preds_at_t) if len(preds_at_t) > 1 else 0.0
-                else:
-                    self.predictions[t] = np.mean(y[:t + 1])
-                    self.model_spread[t] = 0.0
-        
+
+        self._walk_forward_regression(X, y, progress_callback)
+
         if progress_callback:
             progress_callback(1.0, "Computing multi-lookback signals...")
-            
+
         self.residuals = y - self.predictions
-        
-        # ── Final full-sample fit for model stats (OOS R² computed separately) ──
+
         self._compute_model_stats()
-        
-        # ── All downstream analytics on OOS residuals ───────────────────
         self._compute_multi_lookback_signals()
         self._compute_breadth_metrics()
         self._compute_kalman_conviction()
         self._find_pivots()
         self._compute_divergences()
-        self._compute_forward_returns()
+        self._compute_forward_changes()
         self._compute_ou_diagnostics()
         self._compute_hurst()
-        
+
         elapsed = time.time() - start_time
-        logging.info(f"v2.0 engine [{n} obs, {len(self.feature_names)} features] in {elapsed:.1f}s")
-        
+        logging.info(
+            "v2.0 engine [%d obs, %d features] in %.1fs",
+            self.n_samples, len(self.feature_names), elapsed,
+        )
+
         if progress_callback:
             progress_callback(1.0, "Done.")
-            
+
         return self
-    
-    def _compute_model_stats(self):
-        """Compute OOS model fit statistics (only on walk-forward portion)."""
-        # Only count predictions from MIN_TRAIN_SIZE onwards (true OOS)
-        oos_mask = np.arange(self.n_samples) >= self.MIN_TRAIN_SIZE
+
+    def get_current_signal(self) -> dict:
+        """Derive the current composite signal from the latest observation."""
+        current = self.ts_data.iloc[-1]
+        conviction = current["ConvictionScore"]
+
+        if conviction < -CONVICTION_STRONG:
+            signal, strength = "BUY", "STRONG"
+        elif conviction < -CONVICTION_MODERATE:
+            signal, strength = "BUY", "MODERATE"
+        elif conviction < -CONVICTION_WEAK:
+            signal, strength = "BUY", "WEAK"
+        elif conviction > CONVICTION_STRONG:
+            signal, strength = "SELL", "STRONG"
+        elif conviction > CONVICTION_MODERATE:
+            signal, strength = "SELL", "MODERATE"
+        elif conviction > CONVICTION_WEAK:
+            signal, strength = "SELL", "WEAK"
+        else:
+            signal, strength = "HOLD", "NEUTRAL"
+
+        oversold_breadth = current["OversoldBreadth"]
+        overbought_breadth = current["OverboughtBreadth"]
+
+        if signal == "BUY":
+            confidence = "HIGH" if oversold_breadth >= 80 else "MEDIUM" if oversold_breadth >= 60 else "LOW"
+        elif signal == "SELL":
+            confidence = "HIGH" if overbought_breadth >= 80 else "MEDIUM" if overbought_breadth >= 60 else "LOW"
+        else:
+            confidence = "N/A"
+
+        return {
+            "signal": signal,
+            "strength": strength,
+            "confidence": confidence,
+            "conviction_score": conviction,
+            "conviction_upper": current["ConvictionUpper"],
+            "conviction_lower": current["ConvictionLower"],
+            "regime": current["Regime"],
+            "oversold_breadth": oversold_breadth,
+            "overbought_breadth": overbought_breadth,
+            "residual": current["Residual"],
+            "fair_value": current["FairValue"],
+            "actual": current["Actual"],
+            "avg_z": current["AvgZ"],
+            "model_spread": current["ModelSpread"],
+            "has_bullish_div": current["BullishDiv"],
+            "has_bearish_div": current["BearishDiv"],
+            "ou_half_life": self.ou_params["half_life"],
+            "hurst": self.hurst,
+        }
+
+    def get_model_stats(self) -> dict:
+        return self.model_stats
+
+    def get_regime_stats(self) -> dict:
+        ts = self.ts_data
+        regime_counts = ts["Regime"].value_counts()
+        return {
+            "strongly_oversold": regime_counts.get("STRONGLY OVERSOLD", 0),
+            "oversold": regime_counts.get("OVERSOLD", 0),
+            "neutral": regime_counts.get("NEUTRAL", 0),
+            "overbought": regime_counts.get("OVERBOUGHT", 0),
+            "strongly_overbought": regime_counts.get("STRONGLY OVERBOUGHT", 0),
+            "current_regime": ts["Regime"].iloc[-1],
+            "total_buy_signals": ts["BuySignalBreadth"].sum(),
+            "total_sell_signals": ts["SellSignalBreadth"].sum(),
+            "total_bull_div": ts["BullishDiv"].sum(),
+            "total_bear_div": ts["BearishDiv"].sum(),
+            "total_pivot_tops": ts["IsPivotTop"].sum(),
+            "total_pivot_bottoms": ts["IsPivotBottom"].sum(),
+        }
+
+    def get_signal_performance(self) -> dict:
+        """Forward change analysis for BUY/SELL signals at each horizon."""
+        ts = self.ts_data
+        results = {}
+        for period in (5, 10, 20):
+            buy_changes: list[float] = []
+            sell_changes: list[float] = []
+            for i in range(len(ts) - period):
+                score = ts["ConvictionScore"].iloc[i]
+                fwd = ts[f"FwdChg_{period}"].iloc[i]
+                if pd.isna(fwd):
+                    continue
+                if score < -CONVICTION_MODERATE:
+                    buy_changes.append(fwd)
+                if score > CONVICTION_MODERATE:
+                    sell_changes.append(-fwd)
+            results[period] = {
+                "buy_avg": float(np.mean(buy_changes)) if buy_changes else 0.0,
+                "buy_hit": float(np.mean([c > 0 for c in buy_changes])) if buy_changes else 0.0,
+                "buy_count": len(buy_changes),
+                "sell_avg": float(np.mean(sell_changes)) if sell_changes else 0.0,
+                "sell_hit": float(np.mean([c > 0 for c in sell_changes])) if sell_changes else 0.0,
+                "sell_count": len(sell_changes),
+            }
+        return results
+
+    # ── Private: Walk-Forward Regression ──────────────────────────────────
+
+    def _walk_forward_regression(
+        self, X: np.ndarray, y: np.ndarray, progress_callback,
+    ) -> None:
+        """Expanding-window ensemble regression with periodic refitting."""
+        n = self.n_samples
+        self.predictions = np.full(n, np.nan)
+        self.model_spread = np.zeros(n)
+
+        last_models: dict = {"ridge": None, "huber": None, "ols": None}
+        current_scaler = None
+
+        for t in range(n):
+            if progress_callback and t % max(1, n // 20) == 0:
+                progress_callback(t / n, f"Walking forward: {t}/{n} data points...")
+
+            if t < MIN_TRAIN_SIZE:
+                self.predictions[t] = float(np.mean(y[:t])) if t > 0 else float(y[0])
+                self.model_spread[t] = 0.0
+                continue
+
+            # Periodic refit
+            if t == MIN_TRAIN_SIZE or t % REFIT_INTERVAL == 0:
+                last_models, current_scaler = self._fit_ensemble(
+                    X[:t], y[:t], t,
+                )
+
+            # Predict with latest ensemble
+            preds_at_t = self._predict_ensemble(
+                X[t : t + 1], last_models, current_scaler, t,
+            )
+
+            if preds_at_t:
+                self.predictions[t] = float(np.mean(preds_at_t))
+                self.model_spread[t] = float(np.std(preds_at_t)) if len(preds_at_t) > 1 else 0.0
+            else:
+                self.predictions[t] = float(np.mean(y[:t]))
+                self.model_spread[t] = 0.0
+
+    def _fit_ensemble(
+        self, X_train: np.ndarray, y_train: np.ndarray, t: int,
+    ) -> tuple[dict, StandardScaler | None]:
+        """Fit Ridge + Huber + OLS ensemble on training data."""
+        models: dict = {"ridge": None, "huber": None, "ols": None}
+        scaler = None
+
+        if _HAS_SKLEARN:
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X_train)
+
+            try:
+                ridge = RidgeCV(alphas=list(RIDGE_ALPHAS), cv=None)
+                ridge.fit(X_scaled, y_train)
+                models["ridge"] = ridge
+            except Exception as e:
+                logging.warning("Ridge fit failed at t=%d: %s", t, e)
+
+            try:
+                huber = HuberRegressor(epsilon=HUBER_EPSILON, max_iter=HUBER_MAX_ITER)
+                huber.fit(X_scaled, y_train)
+                models["huber"] = huber
+            except Exception as e:
+                logging.warning("Huber fit failed at t=%d: %s", t, e)
+
+        if _HAS_STATSMODELS:
+            try:
+                X_with_const = np.insert(X_train, 0, 1.0, axis=1)
+                ols = sm.OLS(y_train, X_with_const).fit()
+                models["ols"] = ols
+            except Exception as e:
+                logging.warning("OLS fit failed at t=%d: %s", t, e)
+
+        return models, scaler
+
+    @staticmethod
+    def _predict_ensemble(
+        X_pred: np.ndarray,
+        models: dict,
+        scaler: StandardScaler | None,
+        t: int,
+    ) -> list[float]:
+        """Collect predictions from all available ensemble members."""
+        preds: list[float] = []
+
+        if _HAS_SKLEARN and scaler is not None:
+            X_scaled = scaler.transform(X_pred)
+            if models["ridge"] is not None:
+                preds.append(float(models["ridge"].predict(X_scaled)[0]))
+            if models["huber"] is not None:
+                preds.append(float(models["huber"].predict(X_scaled)[0]))
+
+        if _HAS_STATSMODELS and models["ols"] is not None:
+            try:
+                X_with_const = np.insert(X_pred, 0, 1.0, axis=1)
+                preds.append(float(models["ols"].predict(X_with_const)[0]))
+            except Exception as e:
+                logging.warning("OLS predict failed at t=%d: %s", t, e)
+
+        return preds
+
+    # ── Private: Analytics Pipeline ───────────────────────────────────────
+
+    def _compute_model_stats(self) -> None:
+        """OOS model fit statistics (only walk-forward portion)."""
+        oos_mask = np.arange(self.n_samples) >= MIN_TRAIN_SIZE
         y_oos = self.y[oos_mask]
         pred_oos = self.predictions[oos_mask]
-        
+
         valid = np.isfinite(pred_oos)
-        y_valid = y_oos[valid]
-        p_valid = pred_oos[valid]
-        
-        if len(y_valid) > 2 and SKLEARN_AVAILABLE:
-            self.model_stats = {
-                'r2_oos': r2_score(y_valid, p_valid),
-                'rmse_oos': np.sqrt(mean_squared_error(y_valid, p_valid)),
-                'mae_oos': mean_absolute_error(y_valid, p_valid),
-                'n_obs': len(y_valid),
-                'n_features': len(self.feature_names),
-                'avg_model_spread': np.mean(self.model_spread[oos_mask]),
-            }
+        y_v, p_v = y_oos[valid], pred_oos[valid]
+
+        if len(y_v) > 2 and _HAS_SKLEARN:
+            r2 = r2_score(y_v, p_v)
+            rmse = float(np.sqrt(mean_squared_error(y_v, p_v)))
+            mae = float(mean_absolute_error(y_v, p_v))
         else:
-            ss_res = np.sum((y_valid - p_valid) ** 2)
-            ss_tot = np.sum((y_valid - np.mean(y_valid)) ** 2)
-            self.model_stats = {
-                'r2_oos': 1 - ss_res / max(ss_tot, 1e-10),
-                'rmse_oos': np.sqrt(np.mean((y_valid - p_valid) ** 2)),
-                'mae_oos': np.mean(np.abs(y_valid - p_valid)),
-                'n_obs': len(y_valid),
-                'n_features': len(self.feature_names),
-                'avg_model_spread': np.mean(self.model_spread[oos_mask]),
-            }
-    
-    def _compute_multi_lookback_signals(self):
-        """Compute z-scores and zones for each lookback period on OOS residuals."""
+            ss_res = float(np.sum((y_v - p_v) ** 2))
+            ss_tot = float(np.sum((y_v - np.mean(y_v)) ** 2))
+            r2 = 1 - ss_res / max(ss_tot, 1e-10)
+            rmse = float(np.sqrt(np.mean((y_v - p_v) ** 2)))
+            mae = float(np.mean(np.abs(y_v - p_v)))
+
+        self.model_stats = {
+            "r2_oos": r2,
+            "rmse_oos": rmse,
+            "mae_oos": mae,
+            "n_obs": len(y_v),
+            "n_features": len(self.feature_names),
+            "avg_model_spread": float(np.mean(self.model_spread[oos_mask])),
+        }
+
+    def _compute_multi_lookback_signals(self) -> None:
+        """Z-scores and zone classifications for each lookback window."""
         r = self.residuals
         n = len(r)
-        
         self.lookback_data = {}
-        
-        for lb in self.LOOKBACKS:
+
+        for lb in LOOKBACK_WINDOWS:
             if n < lb:
                 continue
-            
-            rolling_mean = pd.Series(r).rolling(lb, min_periods=max(lb // 2, 5)).mean().values
-            rolling_std = pd.Series(r).rolling(lb, min_periods=max(lb // 2, 5)).std().values
-            z_scores = np.where(rolling_std > 1e-8, (r - rolling_mean) / rolling_std, 0)
-            
-            zones = np.full(n, 'N/A', dtype=object)
-            for i in range(n):
-                z = z_scores[i]
-                if np.isnan(z):
-                    continue
-                elif z > 2:
-                    zones[i] = 'Extreme Over'
-                elif z > 1:
-                    zones[i] = 'Overvalued'
-                elif z > -1:
-                    zones[i] = 'Fair Value'
-                elif z > -2:
-                    zones[i] = 'Undervalued'
-                else:
-                    zones[i] = 'Extreme Under'
-            
-            buy_signals = np.zeros(n, dtype=bool)
-            sell_signals = np.zeros(n, dtype=bool)
-            for i in range(1, n):
-                if np.isfinite(z_scores[i]) and np.isfinite(z_scores[i - 1]):
-                    if z_scores[i] < -1 and z_scores[i - 1] >= -1:
-                        buy_signals[i] = True
-                    if z_scores[i] > 1 and z_scores[i - 1] <= 1:
-                        sell_signals[i] = True
-            
+
+            series = pd.Series(r)
+            min_periods = max(lb // 2, 5)
+            rolling_mean = series.rolling(lb, min_periods=min_periods).mean().values
+            rolling_std = series.rolling(lb, min_periods=min_periods).std().values
+            z_scores = np.where(rolling_std > 1e-8, (r - rolling_mean) / rolling_std, 0.0)
+
+            zones = self._classify_zones(z_scores, n)
+            buy_signals, sell_signals = self._detect_crossover_signals(z_scores, n)
+
             self.lookback_data[lb] = {
-                'z_scores': z_scores,
-                'zones': zones,
-                'buy_signals': buy_signals,
-                'sell_signals': sell_signals,
-                'rolling_mean': rolling_mean,
-                'rolling_std': rolling_std,
+                "z_scores": z_scores,
+                "zones": zones,
+                "buy_signals": buy_signals,
+                "sell_signals": sell_signals,
+                "rolling_mean": rolling_mean,
+                "rolling_std": rolling_std,
             }
-        
-        # Master time series
+
         self.ts_data = pd.DataFrame({
-            'Actual': self.y,
-            'FairValue': self.predictions,
-            'Residual': self.residuals,
-            'ModelSpread': self.model_spread,
+            "Actual": self.y,
+            "FairValue": self.predictions,
+            "Residual": self.residuals,
+            "ModelSpread": self.model_spread,
         })
-        
-        for lb in self.lookback_data:
-            self.ts_data[f'Z_{lb}'] = self.lookback_data[lb]['z_scores']
-            self.ts_data[f'Zone_{lb}'] = self.lookback_data[lb]['zones']
-            self.ts_data[f'Buy_{lb}'] = self.lookback_data[lb]['buy_signals']
-            self.ts_data[f'Sell_{lb}'] = self.lookback_data[lb]['sell_signals']
-    
-    def _compute_breadth_metrics(self):
-        """Compute breadth metrics across lookback periods."""
-        n = len(self.ts_data)
-        valid_lookbacks = [lb for lb in self.LOOKBACKS if lb in self.lookback_data]
-        
-        oversold_count = np.zeros(n)
-        overbought_count = np.zeros(n)
-        extreme_oversold = np.zeros(n)
-        extreme_overbought = np.zeros(n)
-        buy_signal_count = np.zeros(n)
-        sell_signal_count = np.zeros(n)
-        avg_z = np.zeros(n)
-        
+        for lb, data in self.lookback_data.items():
+            self.ts_data[f"Z_{lb}"] = data["z_scores"]
+            self.ts_data[f"Zone_{lb}"] = data["zones"]
+            self.ts_data[f"Buy_{lb}"] = data["buy_signals"]
+            self.ts_data[f"Sell_{lb}"] = data["sell_signals"]
+
+    @staticmethod
+    def _classify_zones(z_scores: np.ndarray, n: int) -> np.ndarray:
+        """Map z-scores to valuation zone labels."""
+        zones = np.full(n, "N/A", dtype=object)
         for i in range(n):
-            z_values = []
+            z = z_scores[i]
+            if np.isnan(z):
+                continue
+            if z > Z_EXTREME:
+                zones[i] = "Extreme Over"
+            elif z > Z_THRESHOLD:
+                zones[i] = "Overvalued"
+            elif z > -Z_THRESHOLD:
+                zones[i] = "Fair Value"
+            elif z > -Z_EXTREME:
+                zones[i] = "Undervalued"
+            else:
+                zones[i] = "Extreme Under"
+        return zones
+
+    @staticmethod
+    def _detect_crossover_signals(z_scores: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray]:
+        """Detect z-score threshold crossovers as discrete signals."""
+        buy_signals = np.zeros(n, dtype=bool)
+        sell_signals = np.zeros(n, dtype=bool)
+        for i in range(1, n):
+            if not (np.isfinite(z_scores[i]) and np.isfinite(z_scores[i - 1])):
+                continue
+            if z_scores[i] < -Z_THRESHOLD and z_scores[i - 1] >= -Z_THRESHOLD:
+                buy_signals[i] = True
+            if z_scores[i] > Z_THRESHOLD and z_scores[i - 1] <= Z_THRESHOLD:
+                sell_signals[i] = True
+        return buy_signals, sell_signals
+
+    def _compute_breadth_metrics(self) -> None:
+        """Aggregate zone/signal counts across lookback windows."""
+        n = len(self.ts_data)
+        valid_lookbacks = [lb for lb in LOOKBACK_WINDOWS if lb in self.lookback_data]
+        num_lb = max(len(valid_lookbacks), 1)
+
+        oversold = np.zeros(n)
+        overbought = np.zeros(n)
+        extreme_os = np.zeros(n)
+        extreme_ob = np.zeros(n)
+        buy_count = np.zeros(n)
+        sell_count = np.zeros(n)
+        avg_z = np.zeros(n)
+
+        for i in range(n):
+            z_values: list[float] = []
             for lb in valid_lookbacks:
-                zone = self.lookback_data[lb]['zones'][i]
-                z = self.lookback_data[lb]['z_scores'][i]
-                
-                if zone == 'Extreme Under':
-                    extreme_oversold[i] += 1
-                    oversold_count[i] += 1
-                elif zone == 'Undervalued':
-                    oversold_count[i] += 1
-                elif zone == 'Extreme Over':
-                    extreme_overbought[i] += 1
-                    overbought_count[i] += 1
-                elif zone == 'Overvalued':
-                    overbought_count[i] += 1
-                
-                if self.lookback_data[lb]['buy_signals'][i]:
-                    buy_signal_count[i] += 1
-                if self.lookback_data[lb]['sell_signals'][i]:
-                    sell_signal_count[i] += 1
-                
+                zone = self.lookback_data[lb]["zones"][i]
+                z = self.lookback_data[lb]["z_scores"][i]
+
+                if zone == "Extreme Under":
+                    extreme_os[i] += 1
+                    oversold[i] += 1
+                elif zone == "Undervalued":
+                    oversold[i] += 1
+                elif zone == "Extreme Over":
+                    extreme_ob[i] += 1
+                    overbought[i] += 1
+                elif zone == "Overvalued":
+                    overbought[i] += 1
+
+                if self.lookback_data[lb]["buy_signals"][i]:
+                    buy_count[i] += 1
+                if self.lookback_data[lb]["sell_signals"][i]:
+                    sell_count[i] += 1
+
                 if not np.isnan(z):
                     z_values.append(z)
-            
+
             if z_values:
                 avg_z[i] = np.mean(z_values)
-        
-        num_lb = max(len(valid_lookbacks), 1)
-        
-        self.ts_data['OversoldBreadth'] = oversold_count / num_lb * 100
-        self.ts_data['OverboughtBreadth'] = overbought_count / num_lb * 100
-        self.ts_data['ExtremeOversold'] = extreme_oversold / num_lb * 100
-        self.ts_data['ExtremeOverbought'] = extreme_overbought / num_lb * 100
-        self.ts_data['BuySignalBreadth'] = buy_signal_count
-        self.ts_data['SellSignalBreadth'] = sell_signal_count
-        self.ts_data['AvgZ'] = avg_z
-        
-        # Raw conviction (before Kalman)
-        self.ts_data['ConvictionRaw'] = (
-            self.ts_data['OverboughtBreadth'] - self.ts_data['OversoldBreadth'] +
-            (self.ts_data['ExtremeOverbought'] - self.ts_data['ExtremeOversold']) * 0.5
+
+        self.ts_data["OversoldBreadth"] = oversold / num_lb * 100
+        self.ts_data["OverboughtBreadth"] = overbought / num_lb * 100
+        self.ts_data["ExtremeOversold"] = extreme_os / num_lb * 100
+        self.ts_data["ExtremeOverbought"] = extreme_ob / num_lb * 100
+        self.ts_data["BuySignalBreadth"] = buy_count
+        self.ts_data["SellSignalBreadth"] = sell_count
+        self.ts_data["AvgZ"] = avg_z
+
+        self.ts_data["ConvictionRaw"] = (
+            self.ts_data["OverboughtBreadth"]
+            - self.ts_data["OversoldBreadth"]
+            + (self.ts_data["ExtremeOverbought"] - self.ts_data["ExtremeOversold"]) * 0.5
         )
-    
-    def _compute_kalman_conviction(self):
-        """Apply Kalman filter to raw conviction for smooth, confident signal."""
-        raw = self.ts_data['ConvictionRaw'].values
-        
-        filtered, gains, variances = kalman_filter_1d(raw)
-        
+
+    def _compute_kalman_conviction(self) -> None:
+        """Kalman-filter raw conviction → smooth score with confidence bands."""
+        raw = self.ts_data["ConvictionRaw"].values
+        filtered, _gains, variances = kalman_filter_1d(raw)
         kalman_std = np.sqrt(np.maximum(variances, 0))
-        
-        self.ts_data['ConvictionScore'] = filtered
-        self.ts_data['ConvictionUpper'] = np.clip(filtered + 1.96 * kalman_std, -100, 100)
-        self.ts_data['ConvictionLower'] = np.clip(filtered - 1.96 * kalman_std, -100, 100)
-        
-        # Regime classification on smoothed conviction
+
+        self.ts_data["ConvictionScore"] = np.clip(filtered, -100, 100)
+        self.ts_data["ConvictionUpper"] = np.clip(filtered + 1.96 * kalman_std, -100, 100)
+        self.ts_data["ConvictionLower"] = np.clip(filtered - 1.96 * kalman_std, -100, 100)
+
         regimes = []
-        for score in self.ts_data['ConvictionScore']:
-            if score < -40:
-                regimes.append('STRONGLY OVERSOLD')
-            elif score < -20:
-                regimes.append('OVERSOLD')
-            elif score > 40:
-                regimes.append('STRONGLY OVERBOUGHT')
-            elif score > 20:
-                regimes.append('OVERBOUGHT')
+        for score in self.ts_data["ConvictionScore"]:
+            if score < -CONVICTION_STRONG:
+                regimes.append("STRONGLY OVERSOLD")
+            elif score < -CONVICTION_WEAK:
+                regimes.append("OVERSOLD")
+            elif score > CONVICTION_STRONG:
+                regimes.append("STRONGLY OVERBOUGHT")
+            elif score > CONVICTION_WEAK:
+                regimes.append("OVERBOUGHT")
             else:
-                regimes.append('NEUTRAL')
-        self.ts_data['Regime'] = regimes
-    
-    def _compute_divergences(self):
-        """Swing-based divergence detection (improved from v1.1 point-to-point)."""
+                regimes.append("NEUTRAL")
+        self.ts_data["Regime"] = regimes
+
+    def _compute_divergences(self) -> None:
+        """Swing-based divergence detection between target and residual."""
         n = len(self.ts_data)
-        price = self.y
-        residual = self.residuals
-        
         bull_div = np.zeros(n, dtype=bool)
         bear_div = np.zeros(n, dtype=bool)
-        
-        # Find swing lows/highs using local extrema
+
         order = 5
         if n < order * 3:
-            self.ts_data['BullishDiv'] = bull_div
-            self.ts_data['BearishDiv'] = bear_div
+            self.ts_data["BullishDiv"] = bull_div
+            self.ts_data["BearishDiv"] = bear_div
             return
-        
+
+        price = self.y
+        residual = self.residuals
+
         price_lows = argrelextrema(price, np.less, order=order)[0]
         price_highs = argrelextrema(price, np.greater, order=order)[0]
-        
-        # Bullish divergence: price makes lower low, residual makes higher low
+
         for i in range(1, len(price_lows)):
-            idx_curr = price_lows[i]
-            idx_prev = price_lows[i - 1]
-            if price[idx_curr] < price[idx_prev] and residual[idx_curr] > residual[idx_prev]:
-                if residual[idx_curr] < -np.std(residual[:idx_curr + 1]) * 0.5:
-                    bull_div[idx_curr] = True
-        
-        # Bearish divergence: price makes higher high, residual makes lower high
+            curr, prev = price_lows[i], price_lows[i - 1]
+            if price[curr] < price[prev] and residual[curr] > residual[prev]:
+                if residual[curr] < -np.std(residual[: curr + 1]) * 0.5:
+                    bull_div[curr] = True
+
         for i in range(1, len(price_highs)):
-            idx_curr = price_highs[i]
-            idx_prev = price_highs[i - 1]
-            if price[idx_curr] > price[idx_prev] and residual[idx_curr] < residual[idx_prev]:
-                if residual[idx_curr] > np.std(residual[:idx_curr + 1]) * 0.5:
-                    bear_div[idx_curr] = True
-        
-        self.ts_data['BullishDiv'] = bull_div
-        self.ts_data['BearishDiv'] = bear_div
-    
-    def _find_pivots(self, order=5):
-        """Find pivot points in residuals."""
+            curr, prev = price_highs[i], price_highs[i - 1]
+            if price[curr] > price[prev] and residual[curr] < residual[prev]:
+                if residual[curr] > np.std(residual[: curr + 1]) * 0.5:
+                    bear_div[curr] = True
+
+        self.ts_data["BullishDiv"] = bull_div
+        self.ts_data["BearishDiv"] = bear_div
+
+    def _find_pivots(self, order: int = 5) -> None:
+        """Identify pivot highs/lows in the residual series."""
         r = self.residuals
-        
         max_idx = argrelextrema(r, np.greater, order=order)[0]
         min_idx = argrelextrema(r, np.less, order=order)[0]
-        
+
         self.pivots = {
-            'tops': max_idx,
-            'bottoms': min_idx,
-            'avg_top': np.mean(r[max_idx]) if len(max_idx) > 0 else np.mean(r) + np.std(r),
-            'avg_bottom': np.mean(r[min_idx]) if len(min_idx) > 0 else np.mean(r) - np.std(r),
+            "tops": max_idx,
+            "bottoms": min_idx,
+            "avg_top": float(np.mean(r[max_idx])) if len(max_idx) > 0 else float(np.mean(r) + np.std(r)),
+            "avg_bottom": float(np.mean(r[min_idx])) if len(min_idx) > 0 else float(np.mean(r) - np.std(r)),
         }
-        
-        self.ts_data['IsPivotTop'] = False
-        self.ts_data['IsPivotBottom'] = False
+
+        self.ts_data["IsPivotTop"] = False
+        self.ts_data["IsPivotBottom"] = False
         if len(max_idx) > 0:
-            self.ts_data.loc[max_idx, 'IsPivotTop'] = True
+            self.ts_data.loc[max_idx, "IsPivotTop"] = True
         if len(min_idx) > 0:
-            self.ts_data.loc[min_idx, 'IsPivotBottom'] = True
-        
+            self.ts_data.loc[min_idx, "IsPivotBottom"] = True
+
         self.residual_stats = {
-            'mean': np.mean(r),
-            'std': np.std(r),
-            'current': r[-1],
-            'current_zscore': (r[-1] - np.mean(r)) / max(np.std(r), 1e-8),
-            'percentile': stats.percentileofscore(r, r[-1]),
-            'min': np.min(r),
-            'max': np.max(r),
+            "mean": float(np.mean(r)),
+            "std": float(np.std(r)),
+            "current": float(r[-1]),
+            "current_zscore": float((r[-1] - np.mean(r)) / max(np.std(r), 1e-8)),
+            "percentile": float(stats.percentileofscore(r, r[-1])),
+            "min": float(np.min(r)),
+            "max": float(np.max(r)),
         }
-    
-    def _compute_forward_returns(self):
-        """Compute forward returns for signal validation."""
+
+    def _compute_forward_changes(self) -> None:
+        """Forward % change in target variable at multiple horizons."""
         n = len(self.ts_data)
         y = self.y
-        for period in [5, 10, 20]:
-            fwd_ret = np.full(n, np.nan)
+        for period in (5, 10, 20):
+            fwd = np.full(n, np.nan)
             for i in range(n - period):
-                if y[i] > 0:
-                    fwd_ret[i] = (y[i + period] - y[i]) / y[i] * 100
-            self.ts_data[f'FwdRet_{period}'] = fwd_ret
-    
-    def _compute_ou_diagnostics(self):
-        """OU estimation on out-of-sample residuals."""
+                if abs(y[i]) > 1e-10:
+                    fwd[i] = (y[i + period] - y[i]) / y[i] * 100
+            self.ts_data[f"FwdChg_{period}"] = fwd
+
+    def _compute_ou_diagnostics(self) -> None:
+        """OU parameter estimation and forward projection on OOS residuals."""
         r = self.residuals
-        oos_r = r[self.MIN_TRAIN_SIZE:]
-        
+        oos_r = r[MIN_TRAIN_SIZE:]
+
         if len(oos_r) > 30:
             theta, mu, sigma = ornstein_uhlenbeck_estimate(oos_r)
         else:
-            theta, mu, sigma = 0.05, 0.0, max(np.std(r), 1e-6)
-        
+            theta, mu, sigma = 0.05, 0.0, max(float(np.std(r)), 1e-6)
+
         self.ou_params = {
-            'theta': theta,
-            'mu': mu,
-            'sigma': sigma,
-            'half_life': np.log(2) / max(theta, 1e-4),
-            'stationary_std': sigma / np.sqrt(2 * max(theta, 1e-4)),
+            "theta": theta,
+            "mu": mu,
+            "sigma": sigma,
+            "half_life": np.log(2) / max(theta, 1e-4),
+            "stationary_std": sigma / np.sqrt(2 * max(theta, 1e-4)),
         }
-        
-        # Forward projection: E[residual(t+n)] = μ + (r_current - μ) * exp(-θ*n)
-        current_r = r[-1]
-        proj_days = np.arange(1, 91)
+
+        current_r = float(r[-1])
+        proj_days = np.arange(1, OU_PROJECTION_DAYS + 1)
         self.ou_projection = mu + (current_r - mu) * np.exp(-theta * proj_days)
-    
-    def _compute_hurst(self):
-        """Hurst exponent of residuals — empirical mean-reversion test."""
-        r = self.residuals
-        oos_r = r[self.MIN_TRAIN_SIZE:]
+
+    def _compute_hurst(self) -> None:
+        """Hurst exponent on OOS residuals."""
+        oos_r = self.residuals[MIN_TRAIN_SIZE:]
         self.hurst = hurst_rs(oos_r) if len(oos_r) > 30 else 0.5
-    
-    def get_current_signal(self):
-        """Get comprehensive current signal."""
-        ts = self.ts_data
-        current = ts.iloc[-1]
-        
-        conviction = current['ConvictionScore']
-        regime = current['Regime']
-        oversold_breadth = current['OversoldBreadth']
-        overbought_breadth = current['OverboughtBreadth']
-        model_spread = current['ModelSpread']
-        
-        if conviction < -60:
-            signal, strength = 'BUY', 'STRONG'
-        elif conviction < -40:
-            signal, strength = 'BUY', 'MODERATE'
-        elif conviction < -20:
-            signal, strength = 'BUY', 'WEAK'
-        elif conviction > 60:
-            signal, strength = 'SELL', 'STRONG'
-        elif conviction > 40:
-            signal, strength = 'SELL', 'MODERATE'
-        elif conviction > 20:
-            signal, strength = 'SELL', 'WEAK'
-        else:
-            signal, strength = 'HOLD', 'NEUTRAL'
-        
-        if signal == 'BUY':
-            confidence = 'HIGH' if oversold_breadth >= 80 else 'MEDIUM' if oversold_breadth >= 60 else 'LOW'
-        elif signal == 'SELL':
-            confidence = 'HIGH' if overbought_breadth >= 80 else 'MEDIUM' if overbought_breadth >= 60 else 'LOW'
-        else:
-            confidence = 'N/A'
-        
-        return {
-            'signal': signal,
-            'strength': strength,
-            'confidence': confidence,
-            'conviction_score': conviction,
-            'conviction_upper': current['ConvictionUpper'],
-            'conviction_lower': current['ConvictionLower'],
-            'regime': regime,
-            'oversold_breadth': oversold_breadth,
-            'overbought_breadth': overbought_breadth,
-            'residual': current['Residual'],
-            'fair_value': current['FairValue'],
-            'actual': current['Actual'],
-            'avg_z': current['AvgZ'],
-            'model_spread': model_spread,
-            'has_bullish_div': current['BullishDiv'],
-            'has_bearish_div': current['BearishDiv'],
-            'ou_half_life': self.ou_params['half_life'],
-            'hurst': self.hurst,
-        }
-    
-    def get_model_stats(self):
-        return self.model_stats
-    
-    def get_regime_stats(self):
-        ts = self.ts_data
-        regime_counts = ts['Regime'].value_counts()
-        return {
-            'strongly_oversold': regime_counts.get('STRONGLY OVERSOLD', 0),
-            'oversold': regime_counts.get('OVERSOLD', 0),
-            'neutral': regime_counts.get('NEUTRAL', 0),
-            'overbought': regime_counts.get('OVERBOUGHT', 0),
-            'strongly_overbought': regime_counts.get('STRONGLY OVERBOUGHT', 0),
-            'current_regime': ts['Regime'].iloc[-1],
-            'total_buy_signals': sum(ts['BuySignalBreadth']),
-            'total_sell_signals': sum(ts['SellSignalBreadth']),
-            'total_bull_div': ts['BullishDiv'].sum(),
-            'total_bear_div': ts['BearishDiv'].sum(),
-            'total_pivot_tops': ts['IsPivotTop'].sum(),
-            'total_pivot_bottoms': ts['IsPivotBottom'].sum(),
-        }
-    
-    def get_signal_performance(self):
-        ts = self.ts_data
-        results = {}
-        for period in [5, 10, 20]:
-            buy_returns = []
-            sell_returns = []
-            for i in range(len(ts) - period):
-                if ts['ConvictionScore'].iloc[i] < -40:
-                    fwd = ts[f'FwdRet_{period}'].iloc[i]
-                    if not pd.isna(fwd):
-                        buy_returns.append(fwd)
-                if ts['ConvictionScore'].iloc[i] > 40:
-                    fwd = ts[f'FwdRet_{period}'].iloc[i]
-                    if not pd.isna(fwd):
-                        sell_returns.append(-fwd)
-            results[period] = {
-                'buy_avg': np.mean(buy_returns) if buy_returns else 0,
-                'buy_hit': np.mean([r > 0 for r in buy_returns]) if buy_returns else 0,
-                'buy_count': len(buy_returns),
-                'sell_avg': np.mean(sell_returns) if sell_returns else 0,
-                'sell_hit': np.mean([r > 0 for r in sell_returns]) if sell_returns else 0,
-                'sell_count': len(sell_returns),
-            }
-        return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATA UTILITIES
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_google_sheet(sheet_url):
+def load_google_sheet(sheet_url: str) -> tuple[pd.DataFrame | None, str | None]:
+    """Extract sheet ID and GID from a Google Sheets URL, fetch as CSV."""
     try:
-        import re
-        sheet_id_match = re.search(r'/d/([a-zA-Z0-9-_]+)', sheet_url)
+        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
         if not sheet_id_match:
-            return None, "Invalid URL"
+            return None, "Invalid Google Sheets URL — could not extract sheet ID."
         sheet_id = sheet_id_match.group(1)
-        gid_match = re.search(r'gid=(\d+)', sheet_url)
-        gid = gid_match.group(1) if gid_match else '0'
+        gid_match = re.search(r"gid=(\d+)", sheet_url)
+        gid = gid_match.group(1) if gid_match else "0"
         csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
         df = pd.read_csv(csv_url)
         return df, None
@@ -866,49 +980,71 @@ def load_google_sheet(sheet_url):
         return None, str(e)
 
 
-def clean_data(df, target, features, date_col=None):
-    features_list = list(features)  # Enforce list type to prevent tuple concatenation errors
-    cols = [target] + features_list
-    if date_col and date_col != "None" and date_col in df.columns:
+def clean_data(
+    df: pd.DataFrame,
+    target: str,
+    features: list[str],
+    date_col: str | None = None,
+) -> pd.DataFrame:
+    """Select, coerce, and clean numeric columns; optionally parse dates."""
+    features = list(features)
+    cols = [target] + features
+    if date_col and date_col in df.columns:
         cols.append(date_col)
+
     data = df[cols].copy()
-    for col in [target] + features_list:
-        data[col] = pd.to_numeric(data[col], errors='coerce')
+
+    for col in [target] + features:
+        data[col] = pd.to_numeric(data[col], errors="coerce")
+
     data = data.dropna()
-    numeric_subset = data[[target] + features_list]
-    is_finite = np.isfinite(numeric_subset).all(axis=1)
-    data = data[is_finite]
-    if date_col and date_col != "None" and date_col in data.columns:
+
+    numeric_subset = data[[target] + features]
+    data = data[np.isfinite(numeric_subset).all(axis=1)]
+
+    if date_col and date_col in data.columns:
         try:
-            data[date_col] = pd.to_datetime(data[date_col], errors='coerce')
-            data = data.dropna(subset=[date_col])
-            data = data.sort_values(date_col)
+            data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
+            data = data.dropna(subset=[date_col]).sort_values(date_col)
         except Exception:
             pass
+
     return data.reset_index(drop=True)
 
 
-def update_chart_theme(fig):
+def apply_chart_theme(fig: go.Figure) -> go.Figure:
+    """Apply the Hemrek dark theme to any Plotly figure (including subplots)."""
     fig.update_layout(
-        template="plotly_dark", plot_bgcolor="#1A1A1A", paper_bgcolor="#1A1A1A",
-        font=dict(family="Inter", color="#EAEAEA"),
-        xaxis=dict(gridcolor="#2A2A2A", zerolinecolor="#3A3A3A"),
-        yaxis=dict(gridcolor="#2A2A2A", zerolinecolor="#3A3A3A"),
+        template="plotly_dark",
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=CHART_BG,
+        font=dict(family="Inter", color=CHART_FONT_COLOR),
         margin=dict(t=40, l=20, r=20, b=20),
-        hoverlabel=dict(bgcolor="#2A2A2A", font_size=12)
+        hoverlabel=dict(bgcolor=CHART_BG, font_size=12),
     )
+    fig.update_xaxes(gridcolor=CHART_GRID, zerolinecolor=CHART_ZEROLINE)
+    fig.update_yaxes(gridcolor=CHART_GRID, zerolinecolor=CHART_ZEROLINE)
     return fig
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LANDING PAGE
+# UI RENDERING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def render_landing_page():
+def _render_header() -> None:
+    st.markdown("""
+    <div class="premium-header">
+        <h1>AARAMBH : Fair Value Breadth</h1>
+        <div class="tagline">Walk-Forward Valuation · OU Mean-Reversion · Kalman Conviction | Quantitative Reversal Analysis</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def _render_landing_page() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
-    
+
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         st.markdown("""
         <div class='metric-card purple' style='min-height: 280px; justify-content: flex-start;'>
@@ -925,7 +1061,7 @@ def render_landing_page():
             </p>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col2:
         st.markdown("""
         <div class='metric-card info' style='min-height: 280px; justify-content: flex-start;'>
@@ -942,7 +1078,7 @@ def render_landing_page():
             </p>
         </div>
         """, unsafe_allow_html=True)
-    
+
     with col3:
         st.markdown("""
         <div class='metric-card primary' style='min-height: 280px; justify-content: flex-start;'>
@@ -959,7 +1095,7 @@ def render_landing_page():
             </p>
         </div>
         """, unsafe_allow_html=True)
-    
+
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("""
     <div class='info-box'>
@@ -970,21 +1106,423 @@ def render_landing_page():
     """, unsafe_allow_html=True)
 
 
-def render_footer():
-    from datetime import timezone
+def _render_footer() -> None:
     utc_now = datetime.now(timezone.utc)
     ist_now = utc_now + timedelta(hours=5, minutes=30)
     current_time_ist = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.caption(f"© 2026 {PRODUCT_NAME} | {COMPANY} | {VERSION} | {current_time_ist}")
+    st.caption(f"© {ist_now.year} {PRODUCT_NAME} | {COMPANY} | {VERSION} | {current_time_ist}")
+
+
+def _render_metric_card(label: str, value: str, sub: str, color_class: str = "neutral") -> None:
+    st.markdown(
+        f'<div class="metric-card {color_class}">'
+        f"<h4>{label}</h4><h2>{value}</h2>"
+        f'<div class="sub-metric">{sub}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ── Tab: Regime Analysis ─────────────────────────────────────────────────
+
+def _render_tab_regime(ts_filtered, x_axis, x_title, signal, model_stats, regime_stats, ts) -> None:
+    st.markdown("##### Kalman Conviction Score")
+    st.markdown(
+        '<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias · '
+        "Shaded = 95% Kalman confidence band</p>",
+        unsafe_allow_html=True,
+    )
+
+    fig_conv = go.Figure()
+
+    if "ConvictionUpper" in ts_filtered.columns:
+        fig_conv.add_trace(go.Scatter(
+            x=x_axis, y=ts_filtered["ConvictionUpper"],
+            mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip",
+        ))
+        fig_conv.add_trace(go.Scatter(
+            x=x_axis, y=ts_filtered["ConvictionLower"],
+            mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip",
+            fill="tonexty", fillcolor="rgba(255,195,0,0.08)", name="95% Band",
+        ))
+
+    fig_conv.add_trace(go.Scatter(
+        x=x_axis, y=ts_filtered["ConvictionScore"].clip(lower=0),
+        fill="tozeroy", fillcolor="rgba(239,68,68,0.15)", line=dict(width=0), showlegend=False,
+    ))
+    fig_conv.add_trace(go.Scatter(
+        x=x_axis, y=ts_filtered["ConvictionScore"].clip(upper=0),
+        fill="tozeroy", fillcolor="rgba(16,185,129,0.15)", line=dict(width=0), showlegend=False,
+    ))
+    fig_conv.add_trace(go.Scatter(
+        x=x_axis, y=ts_filtered["ConvictionScore"], mode="lines", name="Conviction (Kalman)",
+        line=dict(color=COLOR_GOLD, width=2),
+    ))
+
+    if "ConvictionRaw" in ts_filtered.columns:
+        fig_conv.add_trace(go.Scatter(
+            x=x_axis, y=ts_filtered["ConvictionRaw"], mode="lines", name="Raw Conviction",
+            line=dict(color="#555", width=1, dash="dot"), opacity=0.5,
+        ))
+
+    fig_conv.add_hline(y=40, line_dash="dash", line_color="rgba(239,68,68,0.5)")
+    fig_conv.add_hline(y=-40, line_dash="dash", line_color="rgba(16,185,129,0.5)")
+    fig_conv.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
+    fig_conv.update_layout(
+        title="Conviction Score (Kalman-Filtered)", height=400,
+        xaxis_title=x_title, yaxis_title="Score", yaxis=dict(range=[-100, 100]),
+    )
+    apply_chart_theme(fig_conv)
+    st.plotly_chart(fig_conv, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("##### Base Conviction Score")
+    st.markdown(
+        '<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias</p>',
+        unsafe_allow_html=True,
+    )
+
+    if "ConvictionRaw" in ts_filtered.columns:
+        fig_raw = go.Figure()
+        fig_raw.add_trace(go.Scatter(
+            x=x_axis, y=ts_filtered["ConvictionRaw"].clip(lower=0),
+            fill="tozeroy", fillcolor="rgba(239,68,68,0.15)", line=dict(width=0), showlegend=False,
+        ))
+        fig_raw.add_trace(go.Scatter(
+            x=x_axis, y=ts_filtered["ConvictionRaw"].clip(upper=0),
+            fill="tozeroy", fillcolor="rgba(16,185,129,0.15)", line=dict(width=0), showlegend=False,
+        ))
+        conv_colors = [
+            COLOR_GREEN if c < -40 else COLOR_RED if c > 40 else COLOR_MUTED
+            for c in ts_filtered["ConvictionRaw"]
+        ]
+        fig_raw.add_trace(go.Scatter(
+            x=x_axis, y=ts_filtered["ConvictionRaw"], mode="lines+markers", name="Raw Conviction",
+            line=dict(color=COLOR_GOLD, width=2), marker=dict(size=4, color=conv_colors),
+        ))
+        fig_raw.add_hline(y=40, line_dash="dash", line_color="rgba(239,68,68,0.5)")
+        fig_raw.add_hline(y=-40, line_dash="dash", line_color="rgba(16,185,129,0.5)")
+        fig_raw.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
+        fig_raw.update_layout(
+            title="Base Conviction Score", height=400,
+            xaxis_title=x_title, yaxis_title="Score", yaxis=dict(range=[-100, 100]),
+        )
+        apply_chart_theme(fig_raw)
+        st.plotly_chart(fig_raw, use_container_width=True)
+
+    st.markdown("---")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("##### Regime Distribution")
+        total = len(ts)
+        regime_data = {
+            "Regime": [
+                "🟢 Strongly Oversold", "🔵 Oversold", "⚪ Neutral",
+                "🟠 Overbought", "🔴 Strongly Overbought",
+            ],
+            "Count": [
+                regime_stats["strongly_oversold"], regime_stats["oversold"],
+                regime_stats["neutral"], regime_stats["overbought"],
+                regime_stats["strongly_overbought"],
+            ],
+            "Pct": [
+                f"{regime_stats['strongly_oversold'] / total * 100:.1f}%",
+                f"{regime_stats['oversold'] / total * 100:.1f}%",
+                f"{regime_stats['neutral'] / total * 100:.1f}%",
+                f"{regime_stats['overbought'] / total * 100:.1f}%",
+                f"{regime_stats['strongly_overbought'] / total * 100:.1f}%",
+            ],
+        }
+        st.dataframe(pd.DataFrame(regime_data), use_container_width=True, hide_index=True)
+
+    with col2:
+        st.markdown("##### Current Regime & Diagnostics")
+        curr_regime = signal["regime"]
+        box_class = "success" if "OVERSOLD" in curr_regime else "danger" if "OVERBOUGHT" in curr_regime else ""
+        if "OVERSOLD" in curr_regime:
+            regime_desc = "Multiple timeframes showing oversold conditions — historically a buying opportunity."
+        elif "OVERBOUGHT" in curr_regime:
+            regime_desc = "Multiple timeframes showing overbought conditions — historically a selling opportunity."
+        else:
+            regime_desc = "No strong directional bias across timeframes."
+
+        st.markdown(
+            f'<div class="guide-box {box_class}">'
+            f"<strong>Current: {curr_regime}</strong><br><br>{regime_desc}</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("##### Model Diagnostics")
+        h_label = (
+            "Mean-Reverting ✅" if signal["hurst"] < 0.45
+            else "Trending ⚠️" if signal["hurst"] > 0.55
+            else "Random Walk"
+        )
+        st.markdown(
+            f"OOS R²: **{model_stats['r2_oos']:.4f}** | "
+            f"RMSE: **{model_stats['rmse_oos']:.4f}** | "
+            f"OU Half-Life: **{signal['ou_half_life']:.0f} days** | "
+            f"Hurst: **{signal['hurst']:.2f}** ({h_label}) | "
+            f"Model Spread: **{model_stats['avg_model_spread']:.3f}**"
+        )
+
+
+# ── Tab: Signal Dashboard ────────────────────────────────────────────────
+
+def _render_tab_signal(
+    engine, ts_filtered, x_axis, x_title, signal, active_target, ts,
+) -> None:
+    col_left, col_right = st.columns([2, 1])
+
+    with col_left:
+        st.markdown("##### Current Signal Analysis")
+        signal_class = (
+            "undervalued" if signal["signal"] == "BUY"
+            else "overvalued" if signal["signal"] == "SELL"
+            else "fair"
+        )
+        signal_emoji = "🟢" if signal["signal"] == "BUY" else "🔴" if signal["signal"] == "SELL" else "🟡"
+
+        st.markdown(f"""
+        <div class="signal-card {signal_class}">
+            <div class="label">WALK-FORWARD SIGNAL</div>
+            <div class="value">{signal_emoji} {signal['signal']}</div>
+            <div class="subtext">{signal['strength']} Strength • {signal['confidence']} Confidence •
+            OU t½ = {signal['ou_half_life']:.0f}d</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        conv_pct = (signal["conviction_score"] + 100) / 2
+        conv_color = (
+            COLOR_GREEN if signal["conviction_score"] < -20
+            else COLOR_RED if signal["conviction_score"] > 20
+            else COLOR_GOLD
+        )
+
+        st.markdown(f"""
+        <div class="conviction-meter">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span style="color: {COLOR_GREEN}; font-size: 0.75rem;">OVERSOLD</span>
+                <span style="color: #888; font-size: 0.75rem;">Conviction: {signal['conviction_score']:+.0f} [{signal['conviction_lower']:+.0f}, {signal['conviction_upper']:+.0f}]</span>
+                <span style="color: {COLOR_RED}; font-size: 0.75rem;">OVERBOUGHT</span>
+            </div>
+            <div class="conviction-bar">
+                <div class="conviction-fill" style="width: {conv_pct}%; background: {conv_color};"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if signal["has_bullish_div"]:
+            st.markdown(
+                '<span class="status-badge buy">🔔 BULLISH DIVERGENCE (Swing-Based)</span>',
+                unsafe_allow_html=True,
+            )
+        if signal["has_bearish_div"]:
+            st.markdown(
+                '<span class="status-badge sell">🔔 BEARISH DIVERGENCE (Swing-Based)</span>',
+                unsafe_allow_html=True,
+            )
+
+        if signal["model_spread"] > 1.0:
+            st.markdown(f"""
+            <div style="background: rgba(245,158,11,0.1); border: 1px solid {COLOR_AMBER}; border-radius: 8px; padding: 0.5rem 1rem; margin-top: 0.5rem;">
+                <span style="color: {COLOR_AMBER}; font-size: 0.8rem;">⚠️ High model disagreement ({signal['model_spread']:.2f}) — fair value estimate is uncertain. Signal confidence may be lower than indicated.</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with col_right:
+        st.markdown("##### Lookback Breakdown")
+        for lb in LOOKBACK_WINDOWS:
+            if lb not in engine.lookback_data:
+                continue
+            z = engine.lookback_data[lb]["z_scores"][-1]
+            zone = engine.lookback_data[lb]["zones"][-1]
+            zone_color = COLOR_GREEN if "Under" in zone else COLOR_RED if "Over" in zone else COLOR_MUTED
+            st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; padding: 0.5rem; border-bottom: 1px solid #2A2A2A;">
+                <span style="color: #888;">{lb}-Day</span>
+                <span style="color: {zone_color}; font-weight: 600;">{zone} ({z:+.2f}σ)</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("##### Actual vs Walk-Forward Fair Value")
+
+    fig = make_subplots(rows=2, cols=1, row_heights=[0.6, 0.4], shared_xaxes=True, vertical_spacing=0.05)
+
+    fig.add_trace(go.Scatter(
+        x=x_axis, y=ts_filtered["Actual"], mode="lines", name="Actual",
+        line=dict(color=COLOR_GOLD, width=2),
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=x_axis, y=ts_filtered["FairValue"], mode="lines", name="Fair Value (OOS)",
+        line=dict(color=COLOR_CYAN, width=2, dash="dash"),
+    ), row=1, col=1)
+
+    if "ModelSpread" in ts_filtered.columns:
+        upper = ts_filtered["FairValue"] + ts_filtered["ModelSpread"]
+        lower = ts_filtered["FairValue"] - ts_filtered["ModelSpread"]
+        fig.add_trace(go.Scatter(
+            x=x_axis, y=upper, mode="lines", line=dict(width=0),
+            showlegend=False, hoverinfo="skip",
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=x_axis, y=lower, mode="lines", line=dict(width=0),
+            fill="tonexty", fillcolor="rgba(6,182,212,0.08)",
+            name="Model Uncertainty", hoverinfo="skip",
+        ), row=1, col=1)
+
+    bar_colors = [COLOR_GREEN if r < 0 else COLOR_RED for r in ts_filtered["Residual"]]
+    fig.add_trace(go.Bar(
+        x=x_axis, y=ts_filtered["Residual"], name="Residual (OOS)",
+        marker_color=bar_colors, showlegend=False,
+    ), row=2, col=1)
+    fig.add_hline(y=0, line_color=COLOR_GOLD, line_width=1, row=2, col=1)
+
+    if hasattr(engine, "ou_projection") and pd.api.types.is_datetime64_any_dtype(ts["Date"]):
+        last_date = ts["Date"].iloc[-1]
+        proj_dates = pd.date_range(start=last_date, periods=OU_PROJECTION_DAYS + 1, freq="D")[1:]
+        fig.add_trace(go.Scatter(
+            x=proj_dates, y=engine.ou_projection,
+            mode="lines", name="OU Projection",
+            line=dict(color=COLOR_GOLD, width=1.5, dash="dot"), opacity=0.5,
+        ), row=2, col=1)
+
+    fig.update_layout(height=500, legend=dict(orientation="h", yanchor="bottom", y=1.02))
+    fig.update_yaxes(title_text=active_target, row=1, col=1)
+    fig.update_yaxes(title_text="Residual", row=2, col=1)
+    apply_chart_theme(fig)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ── Tab: Zone Trends ─────────────────────────────────────────────────────
+
+def _render_tab_zones(ts_filtered, x_axis, x_title) -> None:
+    st.markdown("##### Overbought / Oversold Breadth Over Time")
+    st.markdown(
+        '<p style="color: #888;">% of lookback periods in oversold/overbought zones</p>',
+        unsafe_allow_html=True,
+    )
+
+    fig_zones = go.Figure()
+    fig_zones.add_trace(go.Scatter(
+        x=x_axis, y=ts_filtered["OversoldBreadth"],
+        fill="tozeroy", fillcolor="rgba(16,185,129,0.2)",
+        line=dict(color=COLOR_GREEN, width=2), name="Oversold %",
+    ))
+    fig_zones.add_trace(go.Scatter(
+        x=x_axis, y=ts_filtered["OverboughtBreadth"],
+        fill="tozeroy", fillcolor="rgba(239,68,68,0.2)",
+        line=dict(color=COLOR_RED, width=2), name="Overbought %",
+    ))
+    fig_zones.add_hline(y=60, line_dash="dash", line_color="rgba(255,195,0,0.3)")
+    fig_zones.update_layout(
+        title="Zone Breadth", height=400,
+        xaxis_title=x_title, yaxis_title="% of Lookbacks", yaxis=dict(range=[0, 100]),
+    )
+    apply_chart_theme(fig_zones)
+    st.plotly_chart(fig_zones, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("##### Average Z-Score Across Lookbacks")
+
+    fig_z = go.Figure()
+    z_colors = [COLOR_GREEN if z < -1 else COLOR_RED if z > 1 else COLOR_MUTED for z in ts_filtered["AvgZ"]]
+    fig_z.add_trace(go.Bar(x=x_axis, y=ts_filtered["AvgZ"], marker_color=z_colors, name="Avg Z"))
+    fig_z.add_hline(y=0, line_color=COLOR_GOLD, line_width=1)
+    fig_z.add_hline(y=2, line_dash="dash", line_color="rgba(239,68,68,0.5)")
+    fig_z.add_hline(y=-2, line_dash="dash", line_color="rgba(16,185,129,0.5)")
+    fig_z.update_layout(
+        title="Multi-Lookback Average Z-Score", height=350,
+        xaxis_title=x_title, yaxis_title="Z-Score",
+    )
+    apply_chart_theme(fig_z)
+    st.plotly_chart(fig_z, use_container_width=True)
+
+
+# ── Tab: Signal Trends ───────────────────────────────────────────────────
+
+def _render_tab_signals(engine, ts_filtered, x_axis, x_title) -> None:
+    st.markdown("##### Buy/Sell Signal Count by Period")
+
+    fig_signals = go.Figure()
+    fig_signals.add_trace(go.Bar(
+        x=x_axis, y=ts_filtered["BuySignalBreadth"], name="Buy Signals",
+        marker=dict(color=COLOR_GREEN),
+    ))
+    fig_signals.add_trace(go.Bar(
+        x=x_axis, y=-ts_filtered["SellSignalBreadth"], name="Sell Signals",
+        marker=dict(color=COLOR_RED),
+    ))
+    fig_signals.update_layout(
+        title="Signal Count by Period", height=350,
+        xaxis_title=x_title, yaxis_title="Signal Count", barmode="relative",
+    )
+    apply_chart_theme(fig_signals)
+    st.plotly_chart(fig_signals, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("##### Signal Statistics")
+
+    perf = engine.get_signal_performance()
+    perf_rows = []
+    for period in (5, 10, 20):
+        p = perf[period]
+        perf_rows.append({
+            "Holding Period": f"{period} Days",
+            "Buy Hit Rate": f"{p['buy_hit'] * 100:.1f}%" if p["buy_count"] > 0 else "N/A",
+            "Buy Avg Fwd Chg": f"{p['buy_avg']:.2f}%" if p["buy_count"] > 0 else "N/A",
+            "Buy Count": p["buy_count"],
+            "Sell Hit Rate": f"{p['sell_hit'] * 100:.1f}%" if p["sell_count"] > 0 else "N/A",
+            "Sell Avg Fwd Chg": f"{p['sell_avg']:.2f}%" if p["sell_count"] > 0 else "N/A",
+            "Sell Count": p["sell_count"],
+        })
+    st.dataframe(pd.DataFrame(perf_rows), use_container_width=True, hide_index=True)
+
+
+# ── Tab: Data Table ──────────────────────────────────────────────────────
+
+def _render_tab_data(ts_filtered, ts, active_target) -> None:
+    st.markdown(f"##### Time Series Data ({len(ts_filtered)} observations)")
+
+    display_cols = [
+        "Date", "Actual", "FairValue", "Residual", "ModelSpread", "AvgZ",
+        "OversoldBreadth", "OverboughtBreadth", "ConvictionScore", "Regime",
+        "BullishDiv", "BearishDiv",
+    ]
+    display_cols = [c for c in display_cols if c in ts_filtered.columns]
+
+    display_df = ts_filtered[display_cols].copy()
+    rounding = {
+        "AvgZ": 3, "ModelSpread": 3, "FairValue": 2,
+        "Residual": 1, "ConvictionScore": 1, "OversoldBreadth": 1, "OverboughtBreadth": 1,
+    }
+    for col, decimals in rounding.items():
+        if col in display_df.columns:
+            display_df[col] = display_df[col].round(decimals)
+
+    if "BullishDiv" in display_df.columns:
+        display_df["BullishDiv"] = display_df["BullishDiv"].apply(lambda x: "🟢" if x else "")
+    if "BearishDiv" in display_df.columns:
+        display_df["BearishDiv"] = display_df["BearishDiv"].apply(lambda x: "🔴" if x else "")
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+
+    csv_data = ts.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "📥 Download Full CSV", csv_data,
+        f"aarambh_{active_target}_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv",
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def main():
-    # ── Sidebar ─────────────────────────────────────────────────────────
+def main() -> None:
+    # ── Sidebar: Data Source ──────────────────────────────────────────────
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; padding: 1rem 0; margin-bottom: 1rem;">
@@ -993,671 +1531,303 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        
+
         st.markdown('<div class="sidebar-title">📁 Data Source</div>', unsafe_allow_html=True)
-        data_source = st.radio("Source", ["📤 Upload", "📊 Google Sheets"], horizontal=True, label_visibility="collapsed")
-        
+        data_source = st.radio(
+            "Source", ["📤 Upload", "📊 Google Sheets"],
+            horizontal=True, label_visibility="collapsed",
+        )
+
         df = None
-        
+
         if data_source == "📤 Upload":
-            uploaded_file = st.file_uploader("CSV/Excel", type=['csv', 'xlsx'], label_visibility="collapsed")
+            uploaded_file = st.file_uploader("CSV/Excel", type=["csv", "xlsx"], label_visibility="collapsed")
             if uploaded_file:
                 try:
-                    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+                    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
                 except Exception as e:
                     st.error(f"Error: {e}")
                     return
         else:
-            default_url = "https://docs.google.com/spreadsheets/d/1po7z42n3dYIQGAvn0D1-a4pmyxpnGPQ13TrNi3DB5_c/edit?gid=1938234952#gid=1938234952"
-            sheet_url = st.text_input("Sheet URL", value=default_url, label_visibility="collapsed")
+            sheet_url = st.text_input("Sheet URL", value=DEFAULT_SHEET_URL, label_visibility="collapsed")
             if st.button("🔄 LOAD DATA", type="primary"):
                 with st.spinner("Loading..."):
                     df, error = load_google_sheet(sheet_url)
                     if error:
                         st.error(f"Failed: {error}")
                         return
-                    if 'engine' in st.session_state:
-                        del st.session_state.engine
-                    if 'engine_cache' in st.session_state:
-                        del st.session_state.engine_cache
-                    st.session_state['data'] = df
+                    st.session_state.pop("engine", None)
+                    st.session_state.pop("engine_cache", None)
+                    st.session_state["data"] = df
                     st.toast("Data loaded successfully!", icon="✅")
-            if 'data' in st.session_state:
-                df = st.session_state['data']
-        
+            if "data" in st.session_state:
+                df = st.session_state["data"]
+
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    
-    # ── Landing page if no data ─────────────────────────────────────────
+
+    # ── Landing page when no data loaded ──────────────────────────────────
     if df is None:
-        st.markdown("""
-        <div class="premium-header">
-            <h1>AARAMBH : Fair Value Breadth</h1>
-            <div class="tagline">Walk-Forward Valuation · OU Mean-Reversion · Kalman Conviction | Quantitative Reversal Analysis</div>
-        </div>
-        """, unsafe_allow_html=True)
-        render_landing_page()
-        render_footer()
+        _render_header()
+        _render_landing_page()
+        _render_footer()
         return
-    
-    # ── Model Configuration (staging → commit) ──────────────────────────
+
+    # ── Sidebar: Model Configuration ──────────────────────────────────────
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     all_cols = df.columns.tolist()
-    
+
     if len(numeric_cols) < 2:
         st.error("Need 2+ numeric columns.")
         return
-    
+
     with st.sidebar:
         st.markdown('<div class="sidebar-title">🧠 Model Configuration</div>', unsafe_allow_html=True)
-        
+
         default_target = "NIFTY50_PE" if "NIFTY50_PE" in numeric_cols else numeric_cols[0]
-        default_preds = ["AD_RATIO", "COUNT", "REL_AD_RATIO", "REL_BREADTH", "IN10Y", "IN02Y",
-                         "IN30Y", "INIRYY", "REPO", "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB"]
-        
-        active_target_state = st.session_state.get('active_target', default_target)
+        active_target_state = st.session_state.get("active_target", default_target)
         if active_target_state not in numeric_cols:
-             active_target_state = numeric_cols[0]
-             
-        target_col = st.selectbox("Target Variable", numeric_cols,
-                                  index=numeric_cols.index(active_target_state))
-        
-        date_candidates = [c for c in all_cols if 'date' in c.lower()]
+            active_target_state = numeric_cols[0]
+
+        target_col = st.selectbox(
+            "Target Variable", numeric_cols,
+            index=numeric_cols.index(active_target_state),
+        )
+
+        date_candidates = [c for c in all_cols if "date" in c.lower()]
         default_date = date_candidates[0] if date_candidates else "None"
-        active_date_state = st.session_state.get('active_date_col', default_date)
-        if active_date_state not in (["None"] + all_cols):
-             active_date_state = "None"
-             
-        date_col = st.selectbox("Date Column", ["None"] + all_cols,
-                                index=(["None"] + all_cols).index(active_date_state))
+        active_date_state = st.session_state.get("active_date_col", default_date)
+        if active_date_state not in ["None"] + all_cols:
+            active_date_state = "None"
+
+        date_col = st.selectbox(
+            "Date Column", ["None"] + all_cols,
+            index=(["None"] + all_cols).index(active_date_state),
+        )
 
         available = [c for c in numeric_cols if c != target_col]
-        valid_defaults = [p for p in default_preds if p in available]
-        
-        # Initialize active predictors on first run
-        if 'active_features' not in st.session_state:
-            st.session_state['active_features'] = tuple(valid_defaults or available[:3])
-        
+        valid_defaults = [p for p in DEFAULT_PREDICTORS if p in available]
+
+        if "active_features" not in st.session_state:
+            st.session_state["active_features"] = tuple(valid_defaults or available[:3])
+
         with st.expander("Predictor Columns", expanded=False):
             st.caption("Select predictors, then click Apply to recompute.")
-            
-            # Staging multiselect — user plays freely, no compute
+
             staging_features = st.multiselect(
-                "Predictor Columns",
-                options=available,
-                default=[f for f in st.session_state['active_features'] if f in available],
+                "Predictor Columns", options=available,
+                default=[f for f in st.session_state["active_features"] if f in available],
                 label_visibility="collapsed",
-                help="These columns are used as predictors for walk-forward fair value regression."
+                help="These columns are used as predictors for walk-forward fair value regression.",
             )
-            
+
             if not staging_features:
                 st.warning("⚠️ Select at least one predictor.")
-                staging_features = [f for f in st.session_state['active_features'] if f in available]
-            
-            # Show diff between staging and active
+                staging_features = [f for f in st.session_state["active_features"] if f in available]
+
             staging_set = set(staging_features)
-            active_set = set(st.session_state['active_features'])
+            active_set = set(st.session_state["active_features"])
             has_pred_changes = staging_set != active_set
-            
-            # Also track target/date changes
             has_other_changes = (target_col != active_target_state) or (date_col != active_date_state)
             has_changes = has_pred_changes or has_other_changes
-            
+
             if has_pred_changes:
                 added = staging_set - active_set
                 removed = active_set - staging_set
-                changes = []
+                parts = []
                 if added:
-                    changes.append(f"+{len(added)} added")
+                    parts.append(f"+{len(added)} added")
                 if removed:
-                    changes.append(f"−{len(removed)} removed")
-                st.caption(f"Pending: {', '.join(changes)}")
+                    parts.append(f"−{len(removed)} removed")
+                st.caption(f"Pending: {', '.join(parts)}")
             elif has_other_changes:
                 st.caption("Pending: Target/Date changes")
-            
-            # Apply button — only this triggers recomputation
+
             apply_clicked = st.button(
                 "✅ Apply Configuration" if has_changes else "No changes",
                 use_container_width=True,
                 disabled=not has_changes,
-                type="primary" if has_changes else "secondary"
+                type="primary" if has_changes else "secondary",
             )
-            
+
             if apply_clicked and has_changes:
-                st.session_state['active_target'] = target_col
-                st.session_state['active_features'] = tuple(staging_features)
-                st.session_state['active_date_col'] = date_col
-                
-                if 'engine' in st.session_state:
-                    del st.session_state.engine
-                if 'engine_cache' in st.session_state:
-                    del st.session_state.engine_cache
+                st.session_state["active_target"] = target_col
+                st.session_state["active_features"] = tuple(staging_features)
+                st.session_state["active_date_col"] = date_col
+                st.session_state.pop("engine", None)
+                st.session_state.pop("engine_cache", None)
                 st.rerun()
-            
-            active_count = len(st.session_state['active_features'])
+
+            active_count = len(st.session_state["active_features"])
             total_count = len(available)
             if active_count != total_count:
                 st.info(f"Active: {active_count}/{total_count} predictors")
-        
+
         st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
         st.markdown(f"""
         <div class='info-box'>
             <p style='font-size: 0.8rem; margin: 0; color: var(--text-muted); line-height: 1.5;'>
                 <strong>Version:</strong> {VERSION}<br>
                 <strong>Engine:</strong> Walk-Forward · OU · Kalman<br>
-                <strong>Lookbacks:</strong> 5D, 10D, 20D, 50D, 100D
+                <strong>Lookbacks:</strong> {', '.join(f'{lb}D' for lb in LOOKBACK_WINDOWS)}
             </p>
         </div>
         """, unsafe_allow_html=True)
-    
-    # ── Resolve active config ───────────────────────────────────────────
-    active_target = st.session_state.get('active_target', target_col)
-    active_features = st.session_state.get('active_features', staging_features)
-    active_date = st.session_state.get('active_date_col', date_col)
-    
-    # Explicitly cast to list to prevent list/tuple concatenation errors in clean_data
-    feature_cols = list(active_features)
-    
-    # ── Header ──────────────────────────────────────────────────────────
-    st.markdown("""
-    <div class="premium-header">
-        <h1>AARAMBH : Fair Value Breadth</h1>
-        <div class="tagline">Walk-Forward Valuation · OU Mean-Reversion · Kalman Conviction | Quantitative Reversal Analysis</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # ── Data staleness warning ──────────────────────────────────────────
+
+    # ── Resolve active configuration ──────────────────────────────────────
+    active_target = st.session_state.get("active_target", target_col)
+    active_features = list(st.session_state.get("active_features", staging_features))
+    active_date = st.session_state.get("active_date_col", date_col)
+
+    # ── Header ────────────────────────────────────────────────────────────
+    _render_header()
+
+    # ── Data staleness warning ────────────────────────────────────────────
     if active_date != "None" and active_date in df.columns:
         try:
-            dates = pd.to_datetime(df[active_date], errors='coerce').dropna()
+            dates = pd.to_datetime(df[active_date], errors="coerce").dropna()
             if len(dates) > 0:
-                latest_date = dates.max()
-                from datetime import timezone as tz
-                today = datetime.now(tz.utc) + timedelta(hours=5, minutes=30)
-                data_age = (today - latest_date.to_pydatetime().replace(tzinfo=tz.utc)).days
-                if data_age > 3:
+                latest_date = dates.max().to_pydatetime()
+                if latest_date.tzinfo is not None:
+                    latest_date = latest_date.replace(tzinfo=None)
+                data_age = (datetime.now() - latest_date).days
+                if data_age > STALENESS_DAYS:
                     st.markdown(f"""
-                    <div style="background: rgba(239,68,68,0.1); border: 1px solid #ef4444; border-radius: 10px;
+                    <div style="background: rgba(239,68,68,0.1); border: 1px solid {COLOR_RED}; border-radius: 10px;
                                 padding: 0.75rem 1.25rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 12px;">
                         <span style="font-size: 1.4rem;">⚠️</span>
                         <div>
-                            <span style="color: #ef4444; font-weight: 700;">Stale Data</span>
+                            <span style="color: {COLOR_RED}; font-weight: 700;">Stale Data</span>
                             <span style="color: #888; font-size: 0.85rem;"> — Last data point is <b>{latest_date.strftime('%d %b %Y')}</b> ({data_age} days ago). Update your data source.</span>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
         except Exception:
             pass
-    
-    # ── Clean & Fit ─────────────────────────────────────────────────────
-    data = clean_data(df, active_target, feature_cols, active_date if active_date != "None" else None)
-    
-    if len(data) < 80:
-        st.error("Need 80+ data points for walk-forward analysis (60 minimum training + 20 OOS).")
+
+    # ── Clean & Fit Engine ────────────────────────────────────────────────
+    data = clean_data(df, active_target, active_features, active_date if active_date != "None" else None)
+
+    if len(data) < MIN_DATA_POINTS:
+        st.error(f"Need {MIN_DATA_POINTS}+ data points for walk-forward analysis.")
         return
-    
-    X = data[feature_cols].values
+
+    X = data[active_features].values
     y = data[active_target].values
-    
-    cache_key = f"{active_target}|{'|'.join(sorted(feature_cols))}|{len(data)}"
-    
-    if 'engine_cache' not in st.session_state or st.session_state.engine_cache != cache_key:
+    cache_key = f"{active_target}|{'|'.join(sorted(active_features))}|{len(data)}"
+
+    if st.session_state.get("engine_cache") != cache_key:
         with st.spinner("Preparing walk-forward engine..."):
-            
-            # Interactive Progress Tracker to eliminate the frozen UI feeling
             progress_bar = st.progress(0, text="Initializing engine...")
-            
-            def update_progress(frac, text):
-                progress_bar.progress(frac, text=text)
-            
             engine = FairValueEngine()
-            engine.fit(X, y, feature_names=feature_cols, progress_callback=update_progress)
-            
-            st.session_state.engine = engine
-            st.session_state.engine_cache = cache_key
-            
+            engine.fit(X, y, feature_names=active_features, progress_callback=progress_bar.progress)
+            st.session_state["engine"] = engine
+            st.session_state["engine_cache"] = cache_key
             progress_bar.empty()
-    
-    engine = st.session_state.engine
+
+    engine: FairValueEngine = st.session_state["engine"]
     signal = engine.get_current_signal()
     model_stats = engine.get_model_stats()
     regime_stats = engine.get_regime_stats()
     ts = engine.ts_data.copy()
-    
+
     if active_date != "None" and active_date in data.columns:
-        ts['Date'] = pd.to_datetime(data[active_date].values)
+        ts["Date"] = pd.to_datetime(data[active_date].values)
     else:
-        ts['Date'] = np.arange(len(ts))
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # METRIC CARDS
-    # ═══════════════════════════════════════════════════════════════════════
-    
+        ts["Date"] = np.arange(len(ts))
+
+    # ── Metric Cards ──────────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
-    
+
     c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
-    
+
     with c1:
-        os_color = "success" if signal['oversold_breadth'] > 60 else "neutral"
-        st.markdown(f'<div class="metric-card {os_color}"><h4>Oversold</h4><h2>{signal["oversold_breadth"]:.0f}%</h2><div class="sub-metric">Lookbacks in Zone</div></div>', unsafe_allow_html=True)
-    
+        color = "success" if signal["oversold_breadth"] > 60 else "neutral"
+        _render_metric_card("Oversold", f'{signal["oversold_breadth"]:.0f}%', "Lookbacks in Zone", color)
     with c2:
-        ob_color = "danger" if signal['overbought_breadth'] > 60 else "neutral"
-        st.markdown(f'<div class="metric-card {ob_color}"><h4>Overbought</h4><h2>{signal["overbought_breadth"]:.0f}%</h2><div class="sub-metric">Lookbacks in Zone</div></div>', unsafe_allow_html=True)
-    
+        color = "danger" if signal["overbought_breadth"] > 60 else "neutral"
+        _render_metric_card("Overbought", f'{signal["overbought_breadth"]:.0f}%', "Lookbacks in Zone", color)
     with c3:
-        conv_color = "success" if signal['conviction_score'] < -40 else "danger" if signal['conviction_score'] > 40 else "neutral"
-        st.markdown(f'<div class="metric-card {conv_color}"><h4>Conviction</h4><h2>{signal["conviction_score"]:+.0f}</h2><div class="sub-metric">Kalman-Filtered</div></div>', unsafe_allow_html=True)
-    
+        color = "success" if signal["conviction_score"] < -40 else "danger" if signal["conviction_score"] > 40 else "neutral"
+        _render_metric_card("Conviction", f'{signal["conviction_score"]:+.0f}', "Kalman-Filtered", color)
     with c4:
-        sig_color = "success" if signal['signal'] == 'BUY' else "danger" if signal['signal'] == 'SELL' else "primary"
-        st.markdown(f'<div class="metric-card {sig_color}"><h4>Signal</h4><h2>{signal["signal"]}</h2><div class="sub-metric">{signal["strength"]}</div></div>', unsafe_allow_html=True)
-    
+        color = "success" if signal["signal"] == "BUY" else "danger" if signal["signal"] == "SELL" else "primary"
+        _render_metric_card("Signal", signal["signal"], signal["strength"], color)
     with c5:
-        reg_color = "success" if 'OVERSOLD' in signal['regime'] else "danger" if 'OVERBOUGHT' in signal['regime'] else "neutral"
-        st.markdown(f'<div class="metric-card {reg_color}"><h4>Regime</h4><h2>{signal["regime"]}</h2><div class="sub-metric">Current State</div></div>', unsafe_allow_html=True)
-    
-    # ── Diagnostics Row ─────────────────────────────────────────────────
+        color = "success" if "OVERSOLD" in signal["regime"] else "danger" if "OVERBOUGHT" in signal["regime"] else "neutral"
+        _render_metric_card("Regime", signal["regime"], "Current State", color)
+
+    # ── Diagnostics Row ───────────────────────────────────────────────────
     d1, d2, d3, d4 = st.columns(4)
-    
     with d1:
-        hl = signal['ou_half_life']
-        st.markdown(f'<div class="metric-card primary"><h4>OU Half-Life</h4><h2>{hl:.0f}d</h2><div class="sub-metric">Gap reversion time</div></div>', unsafe_allow_html=True)
-    
+        _render_metric_card("OU Half-Life", f'{signal["ou_half_life"]:.0f}d', "Gap reversion time", "primary")
     with d2:
-        h = signal['hurst']
-        h_label = 'Trending' if h > 0.55 else 'Random' if h > 0.45 else 'Mean-Reverting'
-        h_class = 'danger' if h > 0.55 else 'neutral' if h > 0.45 else 'success'
-        st.markdown(f'<div class="metric-card {h_class}"><h4>Residual Hurst</h4><h2>{h:.2f}</h2><div class="sub-metric">{h_label}</div></div>', unsafe_allow_html=True)
-    
+        h = signal["hurst"]
+        h_label = "Trending" if h > 0.55 else "Random" if h > 0.45 else "Mean-Reverting"
+        h_class = "danger" if h > 0.55 else "neutral" if h > 0.45 else "success"
+        _render_metric_card("Residual Hurst", f"{h:.2f}", h_label, h_class)
     with d3:
-        r2 = model_stats['r2_oos']
-        r2_class = 'success' if r2 > 0.7 else 'warning' if r2 > 0.4 else 'danger'
-        st.markdown(f'<div class="metric-card {r2_class}"><h4>OOS R²</h4><h2>{r2:.3f}</h2><div class="sub-metric">Walk-Forward</div></div>', unsafe_allow_html=True)
-    
+        r2 = model_stats["r2_oos"]
+        r2_class = "success" if r2 > 0.7 else "warning" if r2 > 0.4 else "danger"
+        _render_metric_card("OOS R²", f"{r2:.3f}", "Walk-Forward", r2_class)
     with d4:
-        spread = model_stats['avg_model_spread']
-        sp_class = 'success' if spread < 0.5 else 'warning' if spread < 1.5 else 'danger'
-        st.markdown(f'<div class="metric-card {sp_class}"><h4>Model Spread</h4><h2>{spread:.2f}</h2><div class="sub-metric">Ensemble Disagreement</div></div>', unsafe_allow_html=True)
-    
+        spread = model_stats["avg_model_spread"]
+        sp_class = "success" if spread < 0.5 else "warning" if spread < 1.5 else "danger"
+        _render_metric_card("Model Spread", f"{spread:.2f}", "Ensemble Disagreement", sp_class)
+
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TIMEFRAME FILTER
-    # ═══════════════════════════════════════════════════════════════════════
-    
+
+    # ── Timeframe Filter ──────────────────────────────────────────────────
     tf_col1, tf_col2 = st.columns([1, 6])
     with tf_col1:
         st.markdown("##### ⏱️ View Period")
     with tf_col2:
-        time_filters = ["1M", "6M", "1Y", "2Y", "ALL"]
-        selected_tf = st.radio("Timeframe", time_filters, index=2, horizontal=True, label_visibility="collapsed")
-    
+        selected_tf = st.radio(
+            "Timeframe", ["1M", "6M", "1Y", "2Y", "ALL"],
+            index=2, horizontal=True, label_visibility="collapsed",
+        )
+
     ts_filtered = ts.copy()
     if selected_tf != "ALL":
-        if active_date != "None" and pd.api.types.is_datetime64_any_dtype(ts['Date']):
-            max_date = ts['Date'].max()
-            offsets = {"1M": pd.DateOffset(months=1), "6M": pd.DateOffset(months=6),
-                       "1Y": pd.DateOffset(years=1), "2Y": pd.DateOffset(years=2)}
+        if active_date != "None" and pd.api.types.is_datetime64_any_dtype(ts["Date"]):
+            max_date = ts["Date"].max()
+            offsets = {
+                "1M": pd.DateOffset(months=1), "6M": pd.DateOffset(months=6),
+                "1Y": pd.DateOffset(years=1), "2Y": pd.DateOffset(years=2),
+            }
             cutoff = max_date - offsets.get(selected_tf, pd.DateOffset(years=1))
-            ts_filtered = ts[ts['Date'] >= cutoff]
+            ts_filtered = ts[ts["Date"] >= cutoff]
         else:
-            n_map = {"1M": 21, "6M": 126, "1Y": 252, "2Y": 504}
-            ts_filtered = ts.iloc[max(0, len(ts) - n_map.get(selected_tf, 252)):]
-    
-    x_axis = ts_filtered['Date']
+            n_days = TIMEFRAME_TRADING_DAYS.get(selected_tf, 252)
+            ts_filtered = ts.iloc[max(0, len(ts) - n_days) :]
+
+    x_axis = ts_filtered["Date"]
     x_title = "Date" if active_date != "None" else "Index"
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TABS
-    # ═══════════════════════════════════════════════════════════════════════
-    
+
+    # ── Tabs ──────────────────────────────────────────────────────────────
     tab_regime, tab_signal, tab_zones, tab_signals, tab_data = st.tabs([
         "**🎯 Regime Analysis**",
         "**📊 Signal Dashboard**",
         "**📈 Zone Trends**",
         "**📉 Signal Trends**",
-        "**📋 Data Table**"
+        "**📋 Data Table**",
     ])
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TAB: REGIME ANALYSIS
-    # ═══════════════════════════════════════════════════════════════════════
-    with tab_regime:
-        st.markdown("##### Kalman Conviction Score")
-        st.markdown('<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias · Shaded = 95% Kalman confidence band</p>', unsafe_allow_html=True)
-        
-        fig_conv = go.Figure()
-        
-        # Confidence band
-        if 'ConvictionUpper' in ts_filtered.columns:
-            fig_conv.add_trace(go.Scatter(
-                x=x_axis, y=ts_filtered['ConvictionUpper'],
-                mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip',
-            ))
-            fig_conv.add_trace(go.Scatter(
-                x=x_axis, y=ts_filtered['ConvictionLower'],
-                mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip',
-                fill='tonexty', fillcolor='rgba(255,195,0,0.08)', name='95% Band',
-            ))
-        
-        # Positive/negative fills
-        fig_conv.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['ConvictionScore'].clip(lower=0),
-            fill='tozeroy', fillcolor='rgba(239,68,68,0.15)', line=dict(width=0), showlegend=False
-        ))
-        fig_conv.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['ConvictionScore'].clip(upper=0),
-            fill='tozeroy', fillcolor='rgba(16,185,129,0.15)', line=dict(width=0), showlegend=False
-        ))
-        
-        fig_conv.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['ConvictionScore'], mode='lines', name='Conviction (Kalman)',
-            line=dict(color='#FFC300', width=2),
-        ))
-        
-        # Raw conviction for comparison
-        if 'ConvictionRaw' in ts_filtered.columns:
-            fig_conv.add_trace(go.Scatter(
-                x=x_axis, y=ts_filtered['ConvictionRaw'], mode='lines', name='Raw Conviction',
-                line=dict(color='#555', width=1, dash='dot'), opacity=0.5,
-            ))
-        
-        fig_conv.add_hline(y=40, line_dash="dash", line_color="rgba(239,68,68,0.5)")
-        fig_conv.add_hline(y=-40, line_dash="dash", line_color="rgba(16,185,129,0.5)")
-        fig_conv.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
-        
-        fig_conv.update_layout(title="Conviction Score (Kalman-Filtered)", height=400,
-                               xaxis_title=x_title, yaxis_title="Score", yaxis=dict(range=[-100, 100]))
-        update_chart_theme(fig_conv)
-        st.plotly_chart(fig_conv, use_container_width=True)
-        
-        st.markdown("---")
-        st.markdown("##### Base Conviction Score")
-        st.markdown('<p style="color: #888;">Negative = Oversold bias | Positive = Overbought bias</p>', unsafe_allow_html=True)
-        
-        if 'ConvictionRaw' in ts_filtered.columns:
-            fig_raw = go.Figure()
-            
-            fig_raw.add_trace(go.Scatter(
-                x=x_axis, y=ts_filtered['ConvictionRaw'].clip(lower=0),
-                fill='tozeroy', fillcolor='rgba(239,68,68,0.15)',
-                line=dict(width=0), showlegend=False
-            ))
-            
-            fig_raw.add_trace(go.Scatter(
-                x=x_axis, y=ts_filtered['ConvictionRaw'].clip(upper=0),
-                fill='tozeroy', fillcolor='rgba(16,185,129,0.15)',
-                line=dict(width=0), showlegend=False
-            ))
-            
-            conv_colors = ['#10b981' if c < -40 else '#ef4444' if c > 40 else '#888' for c in ts_filtered['ConvictionRaw']]
-            fig_raw.add_trace(go.Scatter(
-                x=x_axis, y=ts_filtered['ConvictionRaw'], mode='lines+markers', name='Raw Conviction',
-                line=dict(color='#FFC300', width=2), marker=dict(size=4, color=conv_colors)
-            ))
-            
-            fig_raw.add_hline(y=40, line_dash="dash", line_color="rgba(239,68,68,0.5)")
-            fig_raw.add_hline(y=-40, line_dash="dash", line_color="rgba(16,185,129,0.5)")
-            fig_raw.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
-            
-            fig_raw.update_layout(title="Base Conviction Score", height=400, xaxis_title=x_title, yaxis_title="Score",
-                                   yaxis=dict(range=[-100, 100]))
-            update_chart_theme(fig_raw)
-            st.plotly_chart(fig_raw, use_container_width=True)
 
-        st.markdown("---")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("##### Regime Distribution")
-            regime_data = {
-                "Regime": ["🟢 Strongly Oversold", "🔵 Oversold", "⚪ Neutral", "🟠 Overbought", "🔴 Strongly Overbought"],
-                "Count": [regime_stats['strongly_oversold'], regime_stats['oversold'], regime_stats['neutral'],
-                          regime_stats['overbought'], regime_stats['strongly_overbought']],
-                "Pct": [f"{regime_stats['strongly_oversold'] / len(ts) * 100:.1f}%",
-                        f"{regime_stats['oversold'] / len(ts) * 100:.1f}%",
-                        f"{regime_stats['neutral'] / len(ts) * 100:.1f}%",
-                        f"{regime_stats['overbought'] / len(ts) * 100:.1f}%",
-                        f"{regime_stats['strongly_overbought'] / len(ts) * 100:.1f}%"]
-            }
-            st.dataframe(pd.DataFrame(regime_data), width='stretch', hide_index=True)
-        
-        with col2:
-            st.markdown("##### Current Regime & Diagnostics")
-            curr_regime = signal['regime']
-            regime_box_class = "success" if "OVERSOLD" in curr_regime else "danger" if "OVERBOUGHT" in curr_regime else ""
-            
-            st.markdown(f"""
-            <div class="guide-box {regime_box_class}">
-                <strong>Current: {curr_regime}</strong><br><br>
-                {'Multiple timeframes showing oversold conditions — historically a buying opportunity.' if 'OVERSOLD' in curr_regime else 
-                 'Multiple timeframes showing overbought conditions — historically a selling opportunity.' if 'OVERBOUGHT' in curr_regime else
-                 'No strong directional bias across timeframes.'}
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown("##### Model Diagnostics")
-            h_label = 'Mean-Reverting ✅' if signal['hurst'] < 0.45 else 'Trending ⚠️' if signal['hurst'] > 0.55 else 'Random Walk'
-            st.markdown(f"""
-            OOS R²: **{model_stats['r2_oos']:.4f}** | RMSE: **{model_stats['rmse_oos']:.4f}** | 
-            OU Half-Life: **{signal['ou_half_life']:.0f} days** | 
-            Hurst: **{signal['hurst']:.2f}** ({h_label}) |
-            Model Spread: **{model_stats['avg_model_spread']:.3f}**
-            """)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TAB: SIGNAL DASHBOARD
-    # ═══════════════════════════════════════════════════════════════════════
+    with tab_regime:
+        _render_tab_regime(ts_filtered, x_axis, x_title, signal, model_stats, regime_stats, ts)
+
     with tab_signal:
-        col_left, col_right = st.columns([2, 1])
-        
-        with col_left:
-            st.markdown("##### Current Signal Analysis")
-            signal_class = 'undervalued' if signal['signal'] == 'BUY' else 'overvalued' if signal['signal'] == 'SELL' else 'fair'
-            signal_emoji = "🟢" if signal['signal'] == 'BUY' else "🔴" if signal['signal'] == 'SELL' else "🟡"
-            
-            st.markdown(f"""
-            <div class="signal-card {signal_class}">
-                <div class="label">WALK-FORWARD SIGNAL</div>
-                <div class="value">{signal_emoji} {signal['signal']}</div>
-                <div class="subtext">{signal['strength']} Strength • {signal['confidence']} Confidence • 
-                OU t½ = {signal['ou_half_life']:.0f}d</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            conv_pct = (signal['conviction_score'] + 100) / 2
-            conv_color = '#10b981' if signal['conviction_score'] < -20 else '#ef4444' if signal['conviction_score'] > 20 else '#FFC300'
-            
-            st.markdown(f"""
-            <div class="conviction-meter">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                    <span style="color: #10b981; font-size: 0.75rem;">OVERSOLD</span>
-                    <span style="color: #888; font-size: 0.75rem;">Conviction: {signal['conviction_score']:+.0f} [{signal['conviction_lower']:+.0f}, {signal['conviction_upper']:+.0f}]</span>
-                    <span style="color: #ef4444; font-size: 0.75rem;">OVERBOUGHT</span>
-                </div>
-                <div class="conviction-bar">
-                    <div class="conviction-fill" style="width: {conv_pct}%; background: {conv_color};"></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if signal['has_bullish_div']:
-                st.markdown('<span class="status-badge buy">🔔 BULLISH DIVERGENCE (Swing-Based)</span>', unsafe_allow_html=True)
-            if signal['has_bearish_div']:
-                st.markdown('<span class="status-badge sell">🔔 BEARISH DIVERGENCE (Swing-Based)</span>', unsafe_allow_html=True)
-            
-            # Model uncertainty warning
-            if signal['model_spread'] > 1.0:
-                st.markdown(f"""
-                <div style="background: rgba(245,158,11,0.1); border: 1px solid #f59e0b; border-radius: 8px; padding: 0.5rem 1rem; margin-top: 0.5rem;">
-                    <span style="color: #f59e0b; font-size: 0.8rem;">⚠️ High model disagreement ({signal['model_spread']:.2f}) — fair value estimate is uncertain. Signal confidence may be lower than indicated.</span>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        with col_right:
-            st.markdown("##### Lookback Breakdown")
-            for lb in engine.LOOKBACKS:
-                if lb not in engine.lookback_data:
-                    continue
-                z = engine.lookback_data[lb]['z_scores'][-1]
-                zone = engine.lookback_data[lb]['zones'][-1]
-                zone_color = '#10b981' if 'Under' in zone else '#ef4444' if 'Over' in zone else '#888'
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 0.5rem; border-bottom: 1px solid #2A2A2A;">
-                    <span style="color: #888;">{lb}-Day</span>
-                    <span style="color: {zone_color}; font-weight: 600;">{zone} ({z:+.2f}σ)</span>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # Price vs Fair Value + OU projection
-        st.markdown("##### Actual vs Walk-Forward Fair Value")
-        
-        fig = make_subplots(rows=2, cols=1, row_heights=[0.6, 0.4], shared_xaxes=True, vertical_spacing=0.05)
-        
-        fig.add_trace(go.Scatter(x=x_axis, y=ts_filtered['Actual'], mode='lines', name='Actual',
-                                 line=dict(color='#FFC300', width=2)), row=1, col=1)
-        fig.add_trace(go.Scatter(x=x_axis, y=ts_filtered['FairValue'], mode='lines', name='Fair Value (OOS)',
-                                 line=dict(color='#06b6d4', width=2, dash='dash')), row=1, col=1)
-        
-        # Model spread as uncertainty band
-        if 'ModelSpread' in ts_filtered.columns:
-            upper = ts_filtered['FairValue'] + ts_filtered['ModelSpread']
-            lower = ts_filtered['FairValue'] - ts_filtered['ModelSpread']
-            fig.add_trace(go.Scatter(x=x_axis, y=upper, mode='lines', line=dict(width=0),
-                                     showlegend=False, hoverinfo='skip'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=x_axis, y=lower, mode='lines', line=dict(width=0),
-                                     fill='tonexty', fillcolor='rgba(6,182,212,0.08)',
-                                     name='Model Uncertainty', hoverinfo='skip'), row=1, col=1)
-        
-        # Residual bar
-        colors = ['#10b981' if r < 0 else '#ef4444' for r in ts_filtered['Residual']]
-        fig.add_trace(go.Bar(x=x_axis, y=ts_filtered['Residual'], name='Residual (OOS)',
-                             marker_color=colors, showlegend=False), row=2, col=1)
-        fig.add_hline(y=0, line_color="#FFC300", line_width=1, row=2, col=1)
-        
-        # OU projection on residual pane
-        if hasattr(engine, 'ou_projection') and pd.api.types.is_datetime64_any_dtype(ts['Date']):
-            last_date = ts['Date'].iloc[-1]
-            proj_dates = pd.date_range(start=last_date, periods=91, freq='D')[1:]
-            fig.add_trace(go.Scatter(
-                x=proj_dates, y=engine.ou_projection,
-                mode='lines', name='OU Projection',
-                line=dict(color='#FFC300', width=1.5, dash='dot'), opacity=0.5,
-            ), row=2, col=1)
-        
-        fig.update_layout(height=500, legend=dict(orientation="h", yanchor="bottom", y=1.02))
-        fig.update_yaxes(title_text=active_target, row=1, col=1)
-        fig.update_yaxes(title_text="Residual", row=2, col=1)
-        update_chart_theme(fig)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TAB: ZONE TRENDS
-    # ═══════════════════════════════════════════════════════════════════════
+        _render_tab_signal(engine, ts_filtered, x_axis, x_title, signal, active_target, ts)
+
     with tab_zones:
-        st.markdown("##### Overbought / Oversold Breadth Over Time")
-        st.markdown('<p style="color: #888;">% of lookback periods in oversold/overbought zones</p>', unsafe_allow_html=True)
-        
-        fig_zones = go.Figure()
-        fig_zones.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['OversoldBreadth'],
-            fill='tozeroy', fillcolor='rgba(16,185,129,0.2)',
-            line=dict(color='#10b981', width=2), name='Oversold %'
-        ))
-        fig_zones.add_trace(go.Scatter(
-            x=x_axis, y=ts_filtered['OverboughtBreadth'],
-            fill='tozeroy', fillcolor='rgba(239,68,68,0.2)',
-            line=dict(color='#ef4444', width=2), name='Overbought %'
-        ))
-        fig_zones.add_hline(y=60, line_dash="dash", line_color="rgba(255,195,0,0.3)")
-        fig_zones.update_layout(title="Zone Breadth", height=400, xaxis_title=x_title, yaxis_title="% of Lookbacks",
-                                yaxis=dict(range=[0, 100]))
-        update_chart_theme(fig_zones)
-        st.plotly_chart(fig_zones, use_container_width=True)
-        
-        st.markdown("---")
-        st.markdown("##### Average Z-Score Across Lookbacks")
-        
-        fig_z = go.Figure()
-        z_colors = ['#10b981' if z < -1 else '#ef4444' if z > 1 else '#888' for z in ts_filtered['AvgZ']]
-        fig_z.add_trace(go.Bar(x=x_axis, y=ts_filtered['AvgZ'], marker_color=z_colors, name='Avg Z'))
-        fig_z.add_hline(y=0, line_color="#FFC300", line_width=1)
-        fig_z.add_hline(y=2, line_dash="dash", line_color="rgba(239,68,68,0.5)")
-        fig_z.add_hline(y=-2, line_dash="dash", line_color="rgba(16,185,129,0.5)")
-        fig_z.update_layout(title="Multi-Lookback Average Z-Score", height=350, xaxis_title=x_title, yaxis_title="Z-Score")
-        update_chart_theme(fig_z)
-        st.plotly_chart(fig_z, use_container_width=True)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TAB: SIGNAL TRENDS
-    # ═══════════════════════════════════════════════════════════════════════
+        _render_tab_zones(ts_filtered, x_axis, x_title)
+
     with tab_signals:
-        st.markdown("##### Buy/Sell Signal Count by Period")
-        
-        fig_signals = go.Figure()
-        fig_signals.add_trace(go.Bar(
-            x=x_axis, y=ts_filtered['BuySignalBreadth'], name='Buy Signals',
-            marker=dict(color='#10b981')
-        ))
-        fig_signals.add_trace(go.Bar(
-            x=x_axis, y=-ts_filtered['SellSignalBreadth'], name='Sell Signals',
-            marker=dict(color='#ef4444')
-        ))
-        fig_signals.update_layout(title="Signal Count by Period", height=350, xaxis_title=x_title,
-                                  yaxis_title="Signal Count", barmode='relative')
-        update_chart_theme(fig_signals)
-        st.plotly_chart(fig_signals, use_container_width=True)
-        
-        st.markdown("---")
-        st.markdown("##### Signal Statistics")
-        
-        perf = engine.get_signal_performance()
-        perf_data = []
-        for period in [5, 10, 20]:
-            p = perf[period]
-            perf_data.append({
-                'Holding Period': f'{period} Days',
-                'Buy Hit Rate': f"{p['buy_hit'] * 100:.1f}%" if p['buy_count'] > 0 else 'N/A',
-                'Buy Avg Return': f"{p['buy_avg']:.2f}%" if p['buy_count'] > 0 else 'N/A',
-                'Buy Count': p['buy_count'],
-                'Sell Hit Rate': f"{p['sell_hit'] * 100:.1f}%" if p['sell_count'] > 0 else 'N/A',
-                'Sell Avg Return': f"{p['sell_avg']:.2f}%" if p['sell_count'] > 0 else 'N/A',
-                'Sell Count': p['sell_count'],
-            })
-        st.dataframe(pd.DataFrame(perf_data), width='stretch', hide_index=True)
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # TAB: DATA TABLE
-    # ═══════════════════════════════════════════════════════════════════════
+        _render_tab_signals(engine, ts_filtered, x_axis, x_title)
+
     with tab_data:
-        st.markdown(f"##### Time Series Data ({len(ts_filtered)} observations)")
-        
-        display_cols = ['Date', 'Actual', 'FairValue', 'Residual', 'ModelSpread', 'AvgZ',
-                        'OversoldBreadth', 'OverboughtBreadth', 'ConvictionScore', 'Regime',
-                        'BullishDiv', 'BearishDiv']
-        display_cols = [c for c in display_cols if c in ts_filtered.columns]
-        
-        display_ts = ts_filtered[display_cols].copy()
-        for col in ['Residual', 'ModelSpread', 'AvgZ', 'FairValue', 'ConvictionScore',
-                     'OversoldBreadth', 'OverboughtBreadth']:
-            if col in display_ts.columns:
-                display_ts[col] = display_ts[col].round(3 if col in ['AvgZ', 'ModelSpread'] else 2 if col == 'FairValue' else 1)
-        
-        if 'BullishDiv' in display_ts.columns:
-            display_ts['BullishDiv'] = display_ts['BullishDiv'].apply(lambda x: '🟢' if x else '')
-        if 'BearishDiv' in display_ts.columns:
-            display_ts['BearishDiv'] = display_ts['BearishDiv'].apply(lambda x: '🔴' if x else '')
-        
-        st.dataframe(display_ts, width='stretch', hide_index=True, height=500)
-        
-        csv_data = ts.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Full CSV", csv_data,
-                           f"aarambh_{active_target}_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
-    
-    render_footer()
+        _render_tab_data(ts_filtered, ts, active_target)
+
+    _render_footer()
 
 
 if __name__ == "__main__":
