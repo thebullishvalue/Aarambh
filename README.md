@@ -175,7 +175,7 @@ The top metrics row shows 4 diagnostic cards:
 
 ```bash
 pip install -r requirements.txt
-streamlit run aarambh.py
+streamlit run correl.py
 ```
 
 ### GitHub Codespaces
@@ -186,7 +186,7 @@ Open in Codespace — the `.devcontainer` configuration auto-installs dependenci
 
 1. Push to GitHub
 2. Connect at [share.streamlit.io](https://share.streamlit.io)
-3. Set main file to `aarambh.py`
+3. Set main file to `correl.py`
 
 ---
 
