@@ -69,7 +69,7 @@ MIN_TRAIN_SIZE = 20
 REFIT_INTERVAL = 5
 RIDGE_ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 HUBER_EPSILON = 1.35
-HUBER_MAX_ITER = 100
+HUBER_MAX_ITER = 500
 OU_PROJECTION_DAYS = 90
 MIN_DATA_POINTS = 80
 
@@ -1173,7 +1173,7 @@ def _render_tab_regime(ts_filtered, x_axis, x_title, signal, model_stats, regime
         xaxis_title=x_title, yaxis_title="Score", yaxis=dict(range=[-100, 100]),
     )
     apply_chart_theme(fig_conv)
-    st.plotly_chart(fig_conv, use_container_width=True)
+    st.plotly_chart(fig_conv, width="stretch")
 
     st.markdown("---")
     st.markdown("##### Base Conviction Score")
@@ -1208,7 +1208,7 @@ def _render_tab_regime(ts_filtered, x_axis, x_title, signal, model_stats, regime
             xaxis_title=x_title, yaxis_title="Score", yaxis=dict(range=[-100, 100]),
         )
         apply_chart_theme(fig_raw)
-        st.plotly_chart(fig_raw, use_container_width=True)
+        st.plotly_chart(fig_raw, width="stretch")
 
     st.markdown("---")
 
@@ -1235,7 +1235,7 @@ def _render_tab_regime(ts_filtered, x_axis, x_title, signal, model_stats, regime
                 f"{regime_stats['strongly_overbought'] / total * 100:.1f}%",
             ],
         }
-        st.dataframe(pd.DataFrame(regime_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(regime_data), width="stretch", hide_index=True)
 
     with col2:
         st.markdown("##### Current Regime & Diagnostics")
@@ -1394,7 +1394,7 @@ def _render_tab_signal(
     fig.update_yaxes(title_text=active_target, row=1, col=1)
     fig.update_yaxes(title_text="Residual", row=2, col=1)
     apply_chart_theme(fig)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 # ── Tab: Zone Trends ─────────────────────────────────────────────────────
@@ -1423,7 +1423,7 @@ def _render_tab_zones(ts_filtered, x_axis, x_title) -> None:
         xaxis_title=x_title, yaxis_title="% of Lookbacks", yaxis=dict(range=[0, 100]),
     )
     apply_chart_theme(fig_zones)
-    st.plotly_chart(fig_zones, use_container_width=True)
+    st.plotly_chart(fig_zones, width="stretch")
 
     st.markdown("---")
     st.markdown("##### Average Z-Score Across Lookbacks")
@@ -1439,7 +1439,7 @@ def _render_tab_zones(ts_filtered, x_axis, x_title) -> None:
         xaxis_title=x_title, yaxis_title="Z-Score",
     )
     apply_chart_theme(fig_z)
-    st.plotly_chart(fig_z, use_container_width=True)
+    st.plotly_chart(fig_z, width="stretch")
 
 
 # ── Tab: Signal Trends ───────────────────────────────────────────────────
@@ -1461,7 +1461,7 @@ def _render_tab_signals(engine, ts_filtered, x_axis, x_title) -> None:
         xaxis_title=x_title, yaxis_title="Signal Count", barmode="relative",
     )
     apply_chart_theme(fig_signals)
-    st.plotly_chart(fig_signals, use_container_width=True)
+    st.plotly_chart(fig_signals, width="stretch")
 
     st.markdown("---")
     st.markdown("##### Signal Statistics")
@@ -1479,7 +1479,7 @@ def _render_tab_signals(engine, ts_filtered, x_axis, x_title) -> None:
             "Sell Avg Fwd Chg": f"{p['sell_avg']:.2f}%" if p["sell_count"] > 0 else "N/A",
             "Sell Count": p["sell_count"],
         })
-    st.dataframe(pd.DataFrame(perf_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(perf_rows), width="stretch", hide_index=True)
 
 
 # ── Tab: Data Table ──────────────────────────────────────────────────────
@@ -1508,7 +1508,7 @@ def _render_tab_data(ts_filtered, ts, active_target) -> None:
     if "BearishDiv" in display_df.columns:
         display_df["BearishDiv"] = display_df["BearishDiv"].apply(lambda x: "🔴" if x else "")
 
-    st.dataframe(display_df, use_container_width=True, hide_index=True, height=500)
+    st.dataframe(display_df, width="stretch", hide_index=True, height=500)
 
     csv_data = ts.to_csv(index=False).encode("utf-8")
     st.download_button(
@@ -1644,7 +1644,7 @@ def main() -> None:
 
             apply_clicked = st.button(
                 "✅ Apply Configuration" if has_changes else "No changes",
-                use_container_width=True,
+                width="stretch",
                 disabled=not has_changes,
                 type="primary" if has_changes else "secondary",
             )
