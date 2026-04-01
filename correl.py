@@ -179,13 +179,6 @@ class TerminalLogger:
 # Global logger instance
 logger = TerminalLogger()
 
-# Configure logging for detailed terminal output (Streamlit-compatible)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="%H:%M:%S"
-)
-
 # Force flush to ensure logs are visible in Streamlit
 class StreamlitLogHandler(logging.Handler):
     """Custom handler to force log output in Streamlit environment."""
@@ -193,13 +186,16 @@ class StreamlitLogHandler(logging.Handler):
         msg = self.format(record)
         print(msg, flush=True)
 
-# Add custom handler if not already present
+# Configure logging for detailed terminal output (Streamlit-compatible)
+# Remove any existing handlers to prevent duplicates
 root_logger = logging.getLogger()
-if not root_logger.handlers or len(root_logger.handlers) == 1:
-    handler = StreamlitLogHandler()
-    handler.setFormatter(logging.Formatter("%(message)s", datefmt="%H:%M:%S"))
-    root_logger.addHandler(handler)
-    root_logger.setLevel(logging.INFO)
+root_logger.handlers = []  # Clear all handlers
+
+# Add single custom handler that forces flush for Streamlit
+handler = StreamlitLogHandler()
+handler.setFormatter(logging.Formatter("%(message)s", datefmt="%H:%M:%S"))
+root_logger.addHandler(handler)
+root_logger.setLevel(logging.INFO)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
