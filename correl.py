@@ -1735,7 +1735,7 @@ def _render_landing_page() -> None:
         <div class='metric-card purple' style='min-height: 280px; justify-content: flex-start;'>
             <h3 style='color: var(--purple); margin-bottom: 0.5rem;'>🎯 Walk-Forward Fair Value</h3>
             <p style='color: var(--text-muted); font-size: 0.9rem; line-height: 1.6;'>
-                v3.2.1 uses expanding-window regression with strict OOS validation.
+                Expanding-window regression with strict out-of-sample validation.
                 No look-ahead bias. Conformal z-scores preserve fat tails.
             </p>
             <br>
@@ -1787,20 +1787,6 @@ def _render_landing_page() -> None:
         <h4>🚀 Getting Started</h4>
         <p>Use the <strong>Sidebar</strong> to load data (CSV/Excel or Google Sheet).
         Select a <strong>Target</strong> and <strong>Predictors</strong>, then click <strong>Run Analysis</strong> to execute the walk-forward engine.</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""
-    <div class='info-box'>
-        <h4>📊 Application Layout (v3.2.1)</h4>
-        <p>The interface is organized into <strong>4 logically flowing tabs</strong>:</p>
-        <ul style='color: var(--text-secondary); font-size: 0.9rem; line-height: 1.8;'>
-            <li><strong>📊 Dashboard:</strong> Primary signal, conviction analytics, regime distribution, fair value plot</li>
-            <li><strong>🗺️ Breadth Topology:</strong> Zone breadth, signal frequency, z-score composite, lookback states</li>
-            <li><strong>🧠 ML Diagnostics:</strong> OU diagnostics, feature impact history, signal performance</li>
-            <li><strong>📋 Data Table:</strong> Full time-series with export functionality</li>
-        </ul>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1953,7 +1939,7 @@ def _render_tab_dashboard_content(engine, ts_filtered, x_axis, x_title, signal, 
             showlegend=False,
         )
         apply_chart_theme(fig_raw)
-        st.plotly_chart(fig_raw, width="stretch")
+        st.plotly_chart(fig_raw, )
 
     st.markdown("---")
 
@@ -2009,7 +1995,7 @@ def _render_tab_dashboard_content(engine, ts_filtered, x_axis, x_title, signal, 
         showlegend=False,
     )
     apply_chart_theme(fig_conv)
-    st.plotly_chart(fig_conv, width="stretch")
+    st.plotly_chart(fig_conv, )
 
     # Interpretation Card (matching Regime Context style)
     conviction_val = signal["conviction_score"]
@@ -2226,7 +2212,7 @@ def _render_tab_dashboard_content(engine, ts_filtered, x_axis, x_title, signal, 
     fig.update_yaxes(title_text=active_target, row=1, col=1)
     fig.update_yaxes(title_text="Residual", row=2, col=1)
     apply_chart_theme(fig)
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, )
 
 
 def _render_tab_breadth(ts_filtered, x_axis, x_title) -> None:
@@ -2260,7 +2246,7 @@ def _render_tab_breadth(ts_filtered, x_axis, x_title) -> None:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=9)),
     )
     apply_chart_theme(fig_zones)
-    st.plotly_chart(fig_zones, width="stretch")
+    st.plotly_chart(fig_zones, )
 
     st.markdown("---")
     st.markdown("##### Signal Frequency")
@@ -2288,7 +2274,7 @@ def _render_tab_breadth(ts_filtered, x_axis, x_title) -> None:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=9)),
     )
     apply_chart_theme(fig_signals)
-    st.plotly_chart(fig_signals, width="stretch")
+    st.plotly_chart(fig_signals, )
 
     st.markdown("---")
     st.markdown("##### Average Z-Score")
@@ -2311,7 +2297,7 @@ def _render_tab_breadth(ts_filtered, x_axis, x_title) -> None:
         showlegend=False,
     )
     apply_chart_theme(fig_z)
-    st.plotly_chart(fig_z, width="stretch")
+    st.plotly_chart(fig_z, )
 
     st.markdown("---")
     st.markdown("##### Current Lookback States")
@@ -2355,7 +2341,7 @@ def _render_tab_data(ts_filtered, ts, active_target) -> None:
     if "BearishDiv" in display_df.columns:
         display_df["BearishDiv"] = display_df["BearishDiv"].apply(lambda x: "🔴" if x else "")
 
-    st.dataframe(display_df, width="stretch", hide_index=True, height=500)
+    st.dataframe(display_df, hide_index=True, height=500)
 
     csv_data = ts.to_csv(index=False).encode("utf-8")
     st.download_button(
@@ -2424,12 +2410,12 @@ def _render_tab_ml_diagnostics(engine, ts_filtered, x_axis, x_title, signal, mod
                 showlegend=False,
             )
             apply_chart_theme(fig_imp)
-            st.plotly_chart(fig_imp, width="stretch")
+            st.plotly_chart(fig_imp, )
 
         # Feature impact history table (only show if data exists)
         if not feature_history.empty and len(feature_history) > 0:
             st.markdown("###### Impact History")
-            st.dataframe(feature_history.tail(10), width="stretch", hide_index=True, height=200)
+            st.dataframe(feature_history.tail(10), hide_index=True, height=200)
     else:
         st.info("Feature impact data not available for current configuration.")
 
@@ -2456,7 +2442,7 @@ def _render_tab_ml_diagnostics(engine, ts_filtered, x_axis, x_title, signal, mod
             "Sell Count": p["sell_count"],
         })
 
-    st.dataframe(pd.DataFrame(perf_rows), width="stretch", hide_index=True)
+    st.dataframe(pd.DataFrame(perf_rows), hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2497,7 +2483,7 @@ def main() -> None:
 
                 # Show Run Analysis button for uploaded file
                 if not has_data:
-                    if st.button("🚀 Run Analysis", type="primary", width="stretch"):
+                    if st.button("🚀 Run Analysis", type="primary", ):
                         st.session_state.pop("engine", None)
                         st.session_state.pop("engine_cache", None)
                         st.session_state["data"] = df
@@ -2510,7 +2496,7 @@ def main() -> None:
 
             # Show Run Analysis button only if no data loaded yet
             if not has_data:
-                if st.button("🚀 Run Analysis", type="primary", width="stretch"):
+                if st.button("🚀 Run Analysis", type="primary", ):
                     with st.spinner("Loading data and running analysis..."):
                         df, error = load_google_sheet(sheet_url)
                         if error:
@@ -2610,7 +2596,6 @@ def main() -> None:
 
             apply_clicked = st.button(
                 "✅ Apply Configuration" if has_changes else "No changes",
-                width="stretch",
                 disabled=not has_changes,
                 type="primary" if has_changes else "secondary",
             )
@@ -2632,7 +2617,7 @@ def main() -> None:
         
         # Show "Reset Analysis" button after analysis is complete
         if "run_analysis" in st.session_state and st.session_state.get("run_analysis"):
-            if st.button("🔄 Reset Analysis", type="secondary", width="stretch"):
+            if st.button("🔄 Reset Analysis", type="secondary", ):
                 st.session_state.pop("data", None)
                 st.session_state.pop("engine", None)
                 st.session_state.pop("engine_cache", None)
@@ -2780,17 +2765,27 @@ def main() -> None:
         '2Y': 504,
         'ALL': None
     }
-    
+
+    # Custom CSS for full-width timeframe buttons
+    st.markdown("""
+    <style>
+        div[data-testid="stHorizontalBlock"] button[kind="secondary"],
+        div[data-testid="stHorizontalBlock"] button[kind="primary"] {
+            width: 100% !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     # Create button row with equal-width columns
     tf_cols = st.columns(len(TIMEFRAMES))
-    
+
     for i, tf in enumerate(TIMEFRAMES.keys()):
         with tf_cols[i]:
             # Determine button type based on selection
             btn_type = "primary" if st.session_state.tf_selected == tf else "secondary"
-            
+
             # Create button
-            if st.button(tf, key=f"tf_{tf}", width="stretch", type=btn_type):
+            if st.button(tf, key=f"tf_{tf}", type=btn_type):
                 st.session_state.tf_selected = tf
                 st.rerun()
     
