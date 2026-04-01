@@ -1045,7 +1045,7 @@ class FairValueEngine:
         global_weights = np.exp(-decay_rate * np.arange(MAX_TRAIN_SIZE - 1, -1, -1))
 
         # Dynamic refit interval
-        dynamic_refit = int(np.clip(n // 150, 5, 10))
+        dynamic_refit = int(np.clip(n // 200, 2, 5))
 
         last_models: dict = {"ridge": None, "huber": None, "ols": None, "elasticnet": None, "pca_wls": None}
         valid_cols = np.ones(X.shape[1], dtype=bool)
