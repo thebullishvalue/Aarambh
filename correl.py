@@ -179,10 +179,10 @@ class TerminalLogger:
 # Global logger instance
 logger = TerminalLogger()
 
-# Configure logging for detailed terminal output
+# Configure logging for detailed terminal output (Streamlit-compatible)
 logging.basicConfig(
     level=logging.INFO,
-    format="\n%(asctime)s\n%(message)s\n",
+    format="%(message)s",
     datefmt="%H:%M:%S"
 )
 
@@ -194,11 +194,12 @@ class StreamlitLogHandler(logging.Handler):
         print(msg, flush=True)
 
 # Add custom handler if not already present
-if not logging.getLogger().handlers:
+root_logger = logging.getLogger()
+if not root_logger.handlers or len(root_logger.handlers) == 1:
     handler = StreamlitLogHandler()
-    handler.setFormatter(logging.Formatter("\n%(asctime)s\n%(message)s\n", datefmt="%H:%M:%S"))
-    logging.getLogger().addHandler(handler)
-    logging.getLogger().setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(message)s", datefmt="%H:%M:%S"))
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2735,27 +2736,34 @@ def main() -> None:
 
     if st.session_state.get("engine_cache") != cache_key:
         # Cache miss — run engine
-        logger.start("AARAMBH UI — Data Processing")
-        logger.checkpoint("Configuration", f"Target: {active_target} | Features: {len(active_features)} | Samples: {len(data)}")
-        
+        logging.info(f"\n{'='*60}")
+        logging.info(f"AARAMBH v3.2.1 — Processing Data")
+        logging.info(f"{'='*60}")
+        logging.info(f"  Target: {active_target}")
+        logging.info(f"  Features: {len(active_features)} predictors")
+        logging.info(f"  Samples: {len(data)} observations")
+        logging.info(f"  → Running walk-forward engine...\n")
+
         with st.spinner("Preparing walk-forward engine..."):
             if "engine" in st.session_state:
                 del st.session_state["engine"]
             progress_bar = st.progress(0, text="Initializing engine...")
-            logger.checkpoint("Engine Initialization", "FairValueEngine instance created")
-            
+
             engine = FairValueEngine()
             engine.fit(X, y, feature_names=active_features, progress_callback=progress_bar.progress)
-            
+
             st.session_state["engine"] = engine
             st.session_state["engine_cache"] = cache_key
             progress_bar.empty()
-            
-        logger.complete("Engine cached for session")
+
+        logging.info(f"  ✓ Engine ready and cached\n")
     else:
         # Cache hit — skip engine run
-        logger.start("AARAMBH UI — Cached Results")
-        logger.checkpoint("Cache Hit", f"Using cached engine for configuration: {cache_key[:50]}...")
+        logging.info(f"\n{'='*60}")
+        logging.info(f"AARAMBH v3.2.1 — Using Cached Results")
+        logging.info(f"{'='*60}")
+        logging.info(f"  Configuration: {cache_key[:60]}...")
+        logging.info(f"  ✓ Loading from cache\n")
 
     engine: FairValueEngine = st.session_state["engine"]
     signal = engine.get_current_signal()
@@ -2767,8 +2775,6 @@ def main() -> None:
         ts["Date"] = pd.to_datetime(data[active_date].values)
     else:
         ts["Date"] = np.arange(len(ts))
-
-    logger.checkpoint("UI Rendering", "Dashboard tabs and visualizations")
 
     # ── Primary Signal (Above Tabs, Always Visible) ───────────────────────
     _render_primary_signal(signal, model_stats, regime_stats, ts)
