@@ -45,8 +45,6 @@ try:
 except ImportError:
     pass
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
 # ── Optional Dependencies ────────────────────────────────────────────────────
 
 try:
@@ -181,11 +179,26 @@ class TerminalLogger:
 # Global logger instance
 logger = TerminalLogger()
 
+# Configure logging for detailed terminal output
 logging.basicConfig(
-    level=logging.INFO, 
-    format="%(message)s",
+    level=logging.INFO,
+    format="\n%(asctime)s\n%(message)s\n",
     datefmt="%H:%M:%S"
 )
+
+# Force flush to ensure logs are visible in Streamlit
+class StreamlitLogHandler(logging.Handler):
+    """Custom handler to force log output in Streamlit environment."""
+    def emit(self, record):
+        msg = self.format(record)
+        print(msg, flush=True)
+
+# Add custom handler if not already present
+if not logging.getLogger().handlers:
+    handler = StreamlitLogHandler()
+    handler.setFormatter(logging.Formatter("\n%(asctime)s\n%(message)s\n", datefmt="%H:%M:%S"))
+    logging.getLogger().addHandler(handler)
+    logging.getLogger().setLevel(logging.INFO)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1040,6 +1053,9 @@ class FairValueEngine:
         last_models: dict = {"ridge": None, "huber": None, "ols": None, "elasticnet": None, "pca_wls": None}
         valid_cols = np.ones(X.shape[1], dtype=bool)
         chunk_results = {}
+        total_chunks = (n - MIN_TRAIN_SIZE) // dynamic_refit + 1
+
+        logger.checkpoint("Walk-Forward Progress", f"Processing {total_chunks} chunks ({dynamic_refit} samples each)")
 
         # Sequential execution (deterministic, no threading warnings)
         for i, t_start in enumerate(range(MIN_TRAIN_SIZE, n, dynamic_refit)):
@@ -1052,13 +1068,17 @@ class FairValueEngine:
                 self.model_spread[t_start_res:t_end_res] = spreads
                 chunk_results[(t_start_res, t_end_res)] = (models, v_cols)
 
-                if progress_callback and (i + 1) % max(1, (n - MIN_TRAIN_SIZE) // dynamic_refit // 20) == 0:
+                # Log progress every 10 chunks
+                if (i + 1) % 10 == 0 or (i + 1) == total_chunks:
+                    logging.info(f"    → Chunk {i+1}/{total_chunks}: Samples {t_start}→{t_end} processed")
+
+                if progress_callback and (i + 1) % max(1, total_chunks // 20) == 0:
                     progress_callback(
-                        (i + 1) / ((n - MIN_TRAIN_SIZE) // dynamic_refit + 1),
+                        (i + 1) / total_chunks,
                         f"Walking forward... ({t_end}/{n} samples)"
                     )
             except Exception as e:
-                logging.warning("Chunk [%d:%d] failed: %s", t_start, t_end, e)
+                logger.warning(f"Chunk [{t_start}:{t_end}]", str(e))
 
         # Extract features from last chunk
         if chunk_results:
