@@ -1,4 +1,4 @@
-# AARAMBH (आरंभ) v3.2.1 — Fair Value Breadth
+# AARAMBH (आरंभ) v3.2.2 — Fair Value Breadth
 
 **A Hemrek Capital Product**
 
@@ -210,11 +210,12 @@ Conviction_bounded = 100 × tanh(Conviction_raw / 100)
 | v3.0.0 | — | ADAM Refactor: Conformal inference, Drift-Diffusion Model, decoupled OU |
 | v3.1.0 | — | Initial ADAM Critical Fixes: Look-ahead avoidance, Bai-Perron break implementation |
 | v3.2.0 | — | Initial ADAM Phase I: True Conformal quantiles, DDM variance capped, Bai-Perron binding |
+| **v3.2.2** | **2026-04-05** | **Production Patch**: Devcontainer configuration corrected (entry point fixed to `correl.py`), logging standardized to use dynamic `VERSION` constant, production deployment hardening |
 | **v3.2.1** | **2026-04-01** | **ADAM Phase II + Phase III Production Release**: Dynamic Inverse-MAE weighting, double-bounding excision, temporal mapping fixes, Hurst safeguards, **UI/UX reorganization** (4-tab layout, Primary Signal above tabs, Swing-style timeframe buttons), **visualization standards** (unified margins, consistent line widths, standardized legends), **code quality** (dead code removal ~500 lines, DRY helpers, sequential execution) |
 
 ---
 
-## Application Layout Guide (v3.2.1)
+## Application Layout Guide (v3.2.2)
 
 The Streamlit interface has been reorganized into **four logically flowing tabs** for optimal quantitative comprehension:
 

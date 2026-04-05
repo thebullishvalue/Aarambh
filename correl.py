@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AARAMBH (आरंभ) v3.2.1 — Fair Value Breadth
+AARAMBH (आरंभ) v3.2.2 — Fair Value Breadth
 A Hemrek Capital Product
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -71,7 +71,7 @@ except ImportError:
 # CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION = "3.2.1"
+VERSION = "3.2.2"
 PRODUCT_NAME = "Aarambh"
 COMPANY = "Hemrek Capital"
 
@@ -816,7 +816,7 @@ class FairValueEngine:
         self.y = y.copy()
 
         # Start curated logging
-        logger.start(f"AARAMBH v3.2.1 — Fair Value Breadth Engine")
+        logger.start(f"AARAMBH v{VERSION} — Fair Value Breadth Engine")
         logger.checkpoint("Initialization", f"{self.n_samples} observations, {len(self.feature_names)} features")
 
         # Detect structural breaks before walk-forward
@@ -2733,7 +2733,7 @@ def main() -> None:
     if st.session_state.get("engine_cache") != cache_key:
         # Cache miss — run engine
         logging.info(f"\n{'='*60}")
-        logging.info(f"AARAMBH v3.2.1 — Processing Data")
+        logging.info(f"AARAMBH v{VERSION} — Processing Data")
         logging.info(f"{'='*60}")
         logging.info(f"  Target: {active_target}")
         logging.info(f"  Features: {len(active_features)} predictors")
@@ -2756,7 +2756,7 @@ def main() -> None:
     else:
         # Cache hit — skip engine run
         logging.info(f"\n{'='*60}")
-        logging.info(f"AARAMBH v3.2.1 — Using Cached Results")
+        logging.info(f"AARAMBH v{VERSION} — Using Cached Results")
         logging.info(f"{'='*60}")
         logging.info(f"  Configuration: {cache_key[:60]}...")
         logging.info(f"  ✓ Loading from cache\n")

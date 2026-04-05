@@ -1,7 +1,7 @@
 # LICENSE
 
-**AARAMBH (आरंभ) — Fair Value Breadth**  
-**Version 3.2.1**
+**AARAMBH (आरंभ) — Fair Value Breadth**
+**Version 3.2.2**
 
 ---
 
@@ -74,6 +74,7 @@ For licensing inquiries or permissions, contact:
 
 | Version | Date | Status |
 |---------|------|--------|
+| 3.2.2 | 2026-04-05 | Production Patch |
 | 3.2.1 | 2026-04-01 | Production Release |
 | 3.2.0 | 2026 | ADAM Phase I |
 | 3.1.0 | 2026 | ADAM Refactor |
@@ -81,7 +82,7 @@ For licensing inquiries or permissions, contact:
 
 ---
 
-**Last Updated:** 2026-04-01
+**Last Updated:** 2026-04-05
 
 **By using this software, you acknowledge that you have read, understood, and agree to be bound by these terms and conditions.**
 

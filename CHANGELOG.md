@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.2] - 2026-04-05 — Production Deployment Hardening
+
+### Fixed
+- **Devcontainer Configuration**: Corrected container name from `v2.0` to `v3.2.2` and fixed entry point script from `aarambh.py` to `correl.py`, ensuring consistent development environment setup
+- **Dynamic Version Logging**: Replaced hardcoded `v3.2.1` in engine startup log message with dynamic `VERSION` constant, preventing version display inconsistencies across releases
+
+### Changed
+- **Production Metadata**: Updated version references across `requirements.txt`, `LICENSE.md`, and documentation to reflect current release state
+
+---
+
 ## [3.2.1] - 2026-04-01 — ADAM Phase II Logic Guard Hardening + Phase III Production Release
 
 ### Critical — Mathematical Consistency
