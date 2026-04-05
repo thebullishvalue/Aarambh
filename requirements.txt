@@ -1,5 +1,5 @@
 # AARAMBH v3.2.2 - Fair Value Breadth
-# Hemrek Capital Product
+# @thebullishvalue Product
 
 # Core Framework
 streamlit==1.40.0

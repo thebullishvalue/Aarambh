@@ -1,8 +1,23 @@
 # AARAMBH (आरंभ) v3.2.2 — Fair Value Breadth
 
-**A Hemrek Capital Product**
+**A @thebullishvalue Product**
 
 Walk-forward valuation analysis for market reversals. Identifies where market turns BEGIN using out-of-sample ensemble fair value modeling, Ornstein-Uhlenbeck mean-reversion physics with Andrews (1993) median-unbiased estimation, and Drift-Diffusion (DDM) evidence accumulation with mean-reverting variance.
+
+---
+
+## Table of Contents
+
+1. [What It Does](#what-it-does)
+2. [System Architecture](#system-architecture)
+3. [Code Structure](#code-structure)
+4. [Data Schema](#data-schema)
+5. [Mathematical Primitives](#mathematical-primitives)
+6. [Key Equations](#key-equations)
+7. [Application Layout Guide](#application-layout-guide-v322)
+8. [Running the Application](#running-the-application)
+9. [Version History](#version-history)
+10. [References](#references)
 
 ---
 
@@ -16,44 +31,52 @@ The system is complementary to **Arthagati** (mood-based sentiment), giving a 2D
 
 ---
 
-## Architecture
+## System Architecture
+
+### Processing Pipeline
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           DATA INGESTION LAYER                              │
+│                         1. DATA INGESTION LAYER                             │
 │  Google Sheets / CSV / Excel → Cleaning → Chronological Sorting → F-Fill   │
+│  Functions: load_google_sheet(), clean_data()                               │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    STRUCTURAL BREAK DETECTION (Bai-Perron)                  │
-│  Identifies regime shifts → Resets expanding window if break detected       │
+│                    2. STRUCTURAL BREAK DETECTION                            │
+│  Bai-Perron multiple breakpoint test → Regime-aware window resetting        │
+│  Function: detect_structural_breaks()                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    WALK-FORWARD ENSEMBLE REGRESSION                         │
-│  Expanding window (252-day exponential decay) · Thread-safe execution       │
+│                  3. WALK-FORWARD ENSEMBLE REGRESSION                        │
+│  Expanding window (252-day exponential decay) · Sequential execution        │
+│  FairValueEngine._walk_forward_regression()                                 │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Ensemble Members: Ridge · Huber · ElasticNet · PCA-WLS             │   │
+│  │  Ensemble: RidgeCV · HuberRegressor · ElasticNetCV · PCA+WLS        │   │
+│  │  Dynamic Inverse-MAE weighting with 5% baseline floor               │   │
 │  │  Output: OOS Fair Value · Model Spread (disagreement)               │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│              MULTI-LOOKBACK CONFORMAL Z-SCORES (NO LOOK-AHEAD)              │
-│  Lookbacks: 5D, 10D, 20D, 50D, 100D                                         │
+│              4. MULTI-LOOKBACK CONFORMAL Z-SCORES                           │
+│  Lookbacks: 5D, 10D, 20D, 50D, 100D · No look-ahead bias                  │
+│  FairValueEngine._compute_multi_lookback_signals()                          │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Rolling mean/std using ONLY past data (shift(1) applied)           │   │
-│  │  Conformal quantile bounds for fat-tail preservation                │   │
-│  │  Zone Classification: Extreme Under · Under · Fair · Over · Extreme │   │
+│  │  Empirical quantile normalization (fat-tail preservation)           │   │
+│  │  Zone Classification: Extreme Under → Under → Fair → Over → Extreme │   │
+│  │  Crossover signal detection (±1σ threshold)                         │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    BREADTH AGGREGATION & CONVICTON                          │
+│                    5. BREADTH AGGREGATION                                   │
+│  FairValueEngine._compute_breadth_metrics()                                 │
 │  Oversold% = % lookbacks in undervalued zones                               │
 │  Overbought% = % lookbacks in overvalued zones                              │
 │  Raw Conviction = OB% - OS% + 0.5×(Extreme OB - Extreme OS)                 │
@@ -61,56 +84,136 @@ The system is complementary to **Arthagati** (mood-based sentiment), giving a 2D
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│              DRIFT-DIFFUSION FILTER (MEAN-REVERTING VARIANCE)               │
+│              6. DRIFT-DIFFUSION FILTER                                      │
+│  FairValueEngine._compute_ddm_conviction()                                  │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  State:  s_t = (1-λ)×s_{t-1} + λ×drift_t                            │   │
 │  │  Var:    σ²_t = (1-λ)×σ²_{t-1} + λ×σ²_LR + 0.5×|drift_t|            │   │
-│  │  Output: Smoothed conviction · 95% confidence bands                 │   │
-│  │  Bounds: Soft tanh transformation (±100)                            │   │
+│  │  Output: Smoothed conviction · 95% confidence bands · ±100 bounds   │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    OU MEAN-REVERSION DIAGNOSTICS                            │
+│                  7. OU MEAN-REVERSION DIAGNOSTICS                           │
+│  FairValueEngine._compute_ou_diagnostics()                                  │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  Andrews (1993) Median-Unbiased AR(1) Estimator                     │   │
-│  │  Model: dx = θ(μ - x)dt + σdW                                       │   │
-│  │  Half-life: t₁/₂ = ln(2)/θ                                          │   │
-│  │  Rolling θ estimation → Projection confidence bands                 │   │
-│  │  90-day forward path: E[x_t] = μ + (x₀-μ)×e^{-θt}                   │   │
+│  │  Rolling θ estimation (60-day window) → Projection bands            │   │
+│  │  ADF/KPSS stationarity tests → 90-day forward path                  │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    HURST EXPONENT (DFA METHOD)                              │
+│                  8. DIVERGENCE & PIVOT DETECTION                            │
+│  FairValueEngine._find_pivots(), _compute_divergences()                     │
+│  Swing-based extremum detection → Bullish/Bearish divergence flags          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                  9. HURST EXPONENT (DFA)                                    │
+│  FairValueEngine._compute_hurst()                                           │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  Detrended Fluctuation Analysis (Peng et al., 1994)                 │   │
-│  │  Proper lag range: max(4, n/10) to n/4                              │   │
-│  │  H < 0.5 → Mean-reverting · H ≈ 0.5 → Random walk · H > 0.5 → Trend │   │
+│  │  ADF stationarity guard → H < 0.5 (MR) / ≈0.5 (RW) / >0.5 (Trend)  │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    SIGNAL PERFORMANCE & SIGNIFICANCE                        │
-│  Forward change analysis at 5D, 10D, 20D horizons                           │
-│  t-statistics & p-values for hit rates (no overclaiming)                    │
+│                  10. SIGNAL PERFORMANCE ANALYSIS                            │
+│  FairValueEngine.get_signal_performance()                                   │
+│  Forward change analysis at 5D, 10D, 20D · t-statistics & p-values          │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## v3.2.1 ADAM Phase II — Logic Guard Hardening
+## Code Structure
 
-| # | Issue | Fix | Impact |
-|---|-------|-----|--------|
-| 1 | **Static Ensemble Weighting** | Dynamic Iterative MAE calculation penalizing poorly fitting models structurally | Sub-optimal predictive regimes are rapidly discarded from OOS estimates |
-| 2 | **Transient State Drag** | Initialized DDM `state` mapped to first $k$ raw conviction scores | System completely removes early period artificial compression toward 0 |
-| 3 | **Double-Bounded States** | Unified Conviction Math directly emits discrete bound traces natively | Flawless internal correlation mapping eliminating Display UI disparity |
-| 4 | **Index Contamination** | Mapped feature history to explicit chunk window block IDs | Linear regression feature influence charts read clearly mapped temporally |
-| 5 | **Hurst Math Invalidation** | Enforced baseline stationary mapping tests for residuals array structure | $H>0.5$ cannot be conflated synthetically into existence due to misspecification trends |
+```
+correl.py (2,859 lines)
+│
+├── Constants & Configuration (lines 70–136)
+│   VERSION, PRODUCT_NAME, COMPANY
+│   Engine defaults: LOOKBACK_WINDOWS, MIN_TRAIN_SIZE, MAX_TRAIN_SIZE, etc.
+│   Signal thresholds: CONVICTION_STRONG, CONVICTION_MODERATE, CONVICTION_WEAK
+│   DDM parameters: DDM_LEAK_RATE, DDM_DRIFT_SCALE, DDM_LONG_RUN_VAR
+│   Default predictors, Google Sheets URL, chart theme colors
+│
+├── Logging Infrastructure (lines 138–199)
+│   class TerminalLogger          — Curated terminal logging with progress indicators
+│   class StreamlitLogHandler     — Custom handler for Streamlit environment
+│
+├── Streamlit Page Config & CSS (lines 201–383)
+│   st.set_page_config()
+│   Premium CSS: @thebullishvalue Design System, signal cards, metric cards, tables
+│
+├── Mathematical Primitives (lines 385–658)
+│   def ornstein_uhlenbeck_estimate()     — OU params with Andrews (1993) MU correction
+│   def drift_diffusion_filter()          — Leaky DDM with mean-reverting variance
+│   def hurst_dfa()                       — Hurst via Detrended Fluctuation Analysis
+│   def andrews_median_unbiased_ar1()     — AR(1) with median-unbiased correction
+│   def detect_structural_breaks()        — Bai-Perron multiple breakpoint test
+│   def compute_conformal_zscores()       — Quantile-based z-scores (no look-ahead)
+│
+├── Helper Utilities (DRY) (lines 660–765)
+│   def _safe_array_operation()           — Safe array ops with NaN handling
+│   def _classify_zones()                 — Map z-scores to valuation zone labels
+│   def _detect_crossover_signals()       — Z-score threshold crossovers
+│   def _compute_significance()           — t-statistic and p-value computation
+│   def _apply_conviction_bounds()        — Soft tanh bounds for conviction scores
+│
+├── FairValueEngine Class (lines 767–1660)
+│   │
+│   ├── Public API
+│   │   def fit()                         — Full walk-forward pipeline orchestration
+│   │   def get_current_signal()          — Current composite signal derivation
+│   │   def get_model_stats()             — Model fit statistics
+│   │   def get_regime_stats()            — Regime distribution counts
+│   │   def get_signal_performance()      — Forward returns with significance testing
+│   │   def get_feature_impact_history()  — Time-series of feature impacts
+│   │
+│   ├── Walk-Forward Regression (Private)
+│   │   def _walk_forward_regression()    — Expanding-window ensemble with dynamic refit
+│   │   def _process_wf_chunk()           — Single chunk processing with break awareness
+│   │   def _fit_ensemble()               — Ridge + Huber + ElasticNet + PCA-WLS fitting
+│   │   def _predict_ensemble()           — Vectorized prediction with inverse-MAE weighting
+│   │   def _compute_feature_impacts()    — PCA back-projection to original features
+│   │
+│   ├── Analytics Pipeline (Private)
+│   │   def _compute_model_stats()        — OOS R², RMSE, MAE, R² vs Random Walk
+│   │   def _compute_multi_lookback_signals() — Conformal z-scores per lookback
+│   │   def _compute_breadth_metrics()    — Oversold/Overbought breadth aggregation
+│   │   def _compute_ddm_conviction()     — Drift-Diffusion filtering with bounds
+│   │   def _compute_divergences()        — Swing-based divergence detection
+│   │   def _find_pivots()                — Pivot high/low identification
+│   │   def _compute_forward_changes()    — Winsorized forward returns
+│   │   def _compute_ou_diagnostics()     — OU estimation with rolling θ
+│   │   def _compute_hurst()              — DFA Hurst with ADF stationarity guard
+│
+├── Data Utilities (lines 1662–1730)
+│   @st.cache_data load_google_sheet()    — Google Sheets CSV extraction
+│   def clean_data()                      — Column selection, coercion, cleaning
+│   def apply_chart_theme()               — @thebullishvalue dark theme for Plotly figures
+│
+├── UI Rendering (lines 1732–2463)
+│   def _render_header()                  — Premium header banner
+│   def _render_landing_page()            — Pre-analysis landing page (3 feature cards)
+│   def _render_footer()                  — Copyright + version footer
+│   def _render_metric_card()             — DRY helper for consistent metric cards
+│   def _render_primary_signal()          — Always-visible signal card above tabs
+│   def _render_tab_dashboard_content()   — Dashboard tab (6 rows)
+│   def _render_tab_breadth()             — Breadth Topology tab
+│   def _render_tab_data()                — Data Table tab with export
+│   def _render_tab_ml_diagnostics()      — ML Diagnostics tab
+│
+└── Main Application (lines 2465–2859)
+    def main()                            — Sidebar config, data loading, engine orchestration,
+                                          — tab layout, timeframe filtering, caching
+```
 
 ---
 
@@ -139,10 +242,11 @@ Any tabular dataset with numeric columns. Default Google Sheet layout:
 | Actual | float | Target variable value |
 | FairValue | float | Walk-forward ensemble prediction (OOS) |
 | Residual | float | Actual − FairValue (OOS gap) |
-| ModelSpread | float | Std across Ridge/Huber/OLS predictions |
+| ModelSpread | float | Std across Ridge/Huber/ElasticNet/WLS predictions |
 | Z_{5,10,20,50,100} | float | Conformal z-score at each lookback (no look-ahead) |
 | Zone_{5,10,20,50,100} | str | Classification per lookback |
 | ConvictionScore | float | DDM-filtered conviction (mean-reverting var) |
+| ConvictionBounded | float | Soft-bounded conviction (±100 via tanh) |
 | ConvictionUpper/Lower | float | 95% DDM confidence bands |
 | OversoldBreadth | float | % lookbacks in undervalued zones |
 | OverboughtBreadth | float | % lookbacks in overvalued zones |
@@ -197,21 +301,6 @@ H = slope of log(F(s)) vs log(s)
 ```
 Conviction_bounded = 100 × tanh(Conviction_raw / 100)
 ```
-
----
-
-## Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v1.0.0 | — | Initial release: in-sample regression, fixed z-scores |
-| v2.0.0 | — | Walk-forward regression, OU estimation, Kalman conviction, model disagreement, Hurst validation |
-| v2.2.0 | — | Vectorized walk-forward engine, sklearn LinearRegression swap |
-| v3.0.0 | — | ADAM Refactor: Conformal inference, Drift-Diffusion Model, decoupled OU |
-| v3.1.0 | — | Initial ADAM Critical Fixes: Look-ahead avoidance, Bai-Perron break implementation |
-| v3.2.0 | — | Initial ADAM Phase I: True Conformal quantiles, DDM variance capped, Bai-Perron binding |
-| **v3.2.2** | **2026-04-05** | **Production Patch**: Devcontainer configuration corrected (entry point fixed to `correl.py`), logging standardized to use dynamic `VERSION` constant, production deployment hardening |
-| **v3.2.1** | **2026-04-01** | **ADAM Phase II + Phase III Production Release**: Dynamic Inverse-MAE weighting, double-bounding excision, temporal mapping fixes, Hurst safeguards, **UI/UX reorganization** (4-tab layout, Primary Signal above tabs, Swing-style timeframe buttons), **visualization standards** (unified margins, consistent line widths, standardized legends), **code quality** (dead code removal ~500 lines, DRY helpers, sequential execution) |
 
 ---
 
@@ -313,9 +402,24 @@ The app will open at `http://localhost:8501`.
 
 ---
 
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v1.0.0 | — | Initial release: in-sample regression, fixed z-scores |
+| v2.0.0 | — | Walk-forward regression, OU estimation, Kalman conviction, model disagreement, Hurst validation |
+| v2.2.0 | — | Vectorized walk-forward engine, sklearn LinearRegression swap |
+| v3.0.0 | — | ADAM Refactor: Conformal inference, Drift-Diffusion Model, decoupled OU |
+| v3.1.0 | — | Initial ADAM Critical Fixes: Look-ahead avoidance, Bai-Perron break implementation |
+| v3.2.0 | — | Initial ADAM Phase I: True Conformal quantiles, DDM variance capped, Bai-Perron binding |
+| **v3.2.1** | **2026-04-01** | **ADAM Phase II + Phase III Production Release**: Dynamic Inverse-MAE weighting, double-bounding excision, temporal mapping fixes, Hurst safeguards, UI/UX reorganization (4-tab layout, Primary Signal above tabs, Swing-style timeframe buttons), visualization standards, code quality improvements |
+| **v3.2.2** | **2026-04-05** | **Production Patch**: Devcontainer configuration corrected (entry point fixed to `correl.py`), logging standardized to use dynamic `VERSION` constant, production deployment hardening |
+
+---
+
 ## License
 
-Proprietary — Hemrek Capital. All rights reserved.
+Proprietary — @thebullishvalue. All rights reserved. See `LICENSE.md` for full terms.
 
 ---
 

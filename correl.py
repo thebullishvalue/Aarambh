@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 AARAMBH (आरंभ) v3.2.2 — Fair Value Breadth
-A Hemrek Capital Product
+A @thebullishvalue Product
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Walk-forward valuation analysis for market reversals. Identifies where market 
@@ -73,7 +73,7 @@ except ImportError:
 
 VERSION = "3.2.2"
 PRODUCT_NAME = "Aarambh"
-COMPANY = "Hemrek Capital"
+COMPANY = "@thebullishvalue"
 
 # Engine defaults
 LOOKBACK_WINDOWS = (5, 10, 20, 50, 100)
@@ -1716,7 +1716,7 @@ def clean_data(
 
 
 def apply_chart_theme(fig: go.Figure) -> None:
-    """Apply the Hemrek dark theme to any Plotly figure (mutates in place)."""
+    """Apply the @thebullishvalue dark theme to any Plotly figure (mutates in place)."""
     fig.update_layout(
         template="plotly_dark",
         plot_bgcolor=CHART_BG,
