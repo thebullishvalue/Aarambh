@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AARAMBH (आरंभ) v3.2.2 — Fair Value Breadth
+AARAMBH (आरंभ) v3.2.3 — Fair Value Breadth
 A @thebullishvalue Product
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -49,19 +49,17 @@ except ImportError:
 # ── Optional Dependencies ────────────────────────────────────────────────────
 
 try:
-    import statsmodels.api as sm
+    import statsmodels.api as _sm
     from statsmodels.tsa.stattools import adfuller, kpss
     from statsmodels.tsa.regime_switching.bai_perron import BaiPerronTest
     _HAS_STATSMODELS = True
 except ImportError:
-    sm = None
     _HAS_STATSMODELS = False
 
 try:
     from sklearn.decomposition import PCA
     from sklearn.linear_model import ElasticNetCV, HuberRegressor, LinearRegression, RidgeCV
     from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-    from sklearn.model_selection import TimeSeriesSplit
     from sklearn.preprocessing import StandardScaler
     _HAS_SKLEARN = True
 except ImportError:
@@ -72,7 +70,7 @@ except ImportError:
 # CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-VERSION = "3.2.2"
+VERSION = "3.2.3"
 PRODUCT_NAME = "Aarambh"
 COMPANY = "@thebullishvalue"
 
@@ -557,38 +555,6 @@ def hurst_dfa(series: np.ndarray, min_scale: int = 4, max_scale: int | None = No
     return float(np.clip(slope, 0.01, 0.99))
 
 
-def andrews_median_unbiased_ar1(series: np.ndarray) -> tuple[float, float]:
-    """Andrews (1993) median-unbiased AR(1) estimator with confidence interval.
-    
-    Returns:
-        (ar_coef, half_life) with median-unbiased correction.
-    """
-    x = np.asarray(series, dtype=np.float64)
-    x = x[np.isfinite(x)]
-    n = len(x)
-    
-    if n < 20:
-        return 0.0, np.inf
-    
-    x_lag = x[:-1]
-    x_curr = x[1:]
-    
-    # OLS estimate
-    a_ols = np.corrcoef(x_lag, x_curr)[0, 1]
-    
-    # Andrews MU correction
-    if a_ols > 0.95:
-        a_mu = a_ols - (1 + 3 * a_ols) / n - 3 * (1 + 3 * a_ols) / (n ** 2)
-    else:
-        a_mu = a_ols - (1 + 3 * a_ols) / n
-    
-    a_mu = np.clip(a_mu, 0.0, 0.999)
-    
-    half_life = np.log(0.5) / np.log(a_mu) if a_mu > 0.01 else np.inf
-    
-    return a_mu, half_life
-
-
 def detect_structural_breaks(
     series: np.ndarray,
     max_breaks: int = 3,
@@ -660,34 +626,6 @@ def compute_conformal_zscores(
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPER UTILITIES (DRY)
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _safe_array_operation(
-    arr: np.ndarray,
-    operation: str,
-    default: float = 0.0,
-) -> float:
-    """Safely compute common array operations with NaN handling."""
-    arr = np.asarray(arr)
-    valid = np.isfinite(arr)
-    
-    if not np.any(valid):
-        return default
-    
-    clean = arr[valid]
-    
-    if operation == "mean":
-        return float(np.mean(clean))
-    elif operation == "std":
-        return float(np.std(clean)) if len(clean) > 1 else default
-    elif operation == "min":
-        return float(np.min(clean))
-    elif operation == "max":
-        return float(np.max(clean))
-    elif operation == "sum":
-        return float(np.sum(clean))
-    else:
-        return default
-
 
 def _classify_zones(z_scores: np.ndarray) -> np.ndarray:
     """Map z-scores to valuation zone labels."""
@@ -1351,8 +1289,8 @@ class FairValueEngine:
 
     def _compute_multi_lookback_signals(self) -> None:
         """Conformal z-scores and zone classifications for each lookback window.
-        
-        FIX: Uses shift(1) to prevent look-ahead bias.
+
+        Uses backward-looking windows to prevent look-ahead bias.
         """
         r = self.residuals
         n = len(r)
@@ -1582,7 +1520,7 @@ class FairValueEngine:
 
         if len(oos_r) > 30:
             theta, mu, sigma = ornstein_uhlenbeck_estimate(oos_r)
-            
+
             try:
                 adf_pvalue = float(adfuller(oos_r, autolag="AIC")[1])
             except Exception:
@@ -1595,10 +1533,8 @@ class FairValueEngine:
             except Exception:
                 kpss_pvalue = 0.0
 
-            # V3.1: Decoupled vol scaler
-            vol_multiplier = 1.0
             dynamic_theta = theta
-            
+
             # Rolling θ estimation for projection uncertainty
             window_size = min(60, len(oos_r) // 3)
             self.theta_history = []
@@ -1614,7 +1550,6 @@ class FairValueEngine:
             theta, mu, sigma = 0.05, 0.0, max(float(np.std(r)), 1e-6)
             adf_pvalue = 1.0
             kpss_pvalue = 0.0
-            vol_multiplier = 1.0
             dynamic_theta = theta
             theta_std = 0.0
 
@@ -1628,7 +1563,6 @@ class FairValueEngine:
             "stationary_std": sigma / np.sqrt(2 * max(theta, 1e-4)),
             "adf_pvalue": adf_pvalue,
             "kpss_pvalue": kpss_pvalue,
-            "vol_multiplier": vol_multiplier,
             "theta_std": theta_std,
         }
 
@@ -1820,15 +1754,12 @@ def _render_footer() -> None:
 # TAB RENDERING FUNCTIONS (Phase III - Consolidated)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _render_metric_card(label: str, value: str, subtext: str = "", color_class: str = "neutral", inline: bool = False) -> None:
+def _render_metric_card(label: str, value: str, subtext: str = "", color_class: str = "neutral") -> None:
     """DRY helper for rendering metric cards consistently."""
     esc = html.escape
     card_class = f"metric-card {esc(color_class)}"
-    if inline:
-        card_style = 'style="min-height: 100px;"'
-    else:
-        card_style = 'style="min-height: 120px;"'
-    
+    card_style = 'style="min-height: 120px;"'
+
     st.markdown(
         f'<div class="{card_class}" {card_style}>'
         f"<h4>{esc(label)}</h4>"
@@ -1956,7 +1887,7 @@ def _render_tab_dashboard_content(engine, ts_filtered, x_axis, x_title, signal, 
             showlegend=False,
         )
         apply_chart_theme(fig_raw)
-        st.plotly_chart(fig_raw, )
+        st.plotly_chart(fig_raw)
 
     st.markdown("---")
 
@@ -2012,7 +1943,7 @@ def _render_tab_dashboard_content(engine, ts_filtered, x_axis, x_title, signal, 
         showlegend=False,
     )
     apply_chart_theme(fig_conv)
-    st.plotly_chart(fig_conv, )
+    st.plotly_chart(fig_conv)
 
     # Interpretation Card (matching Regime Context style)
     conviction_val = signal["conviction_score"]
@@ -2229,7 +2160,7 @@ def _render_tab_dashboard_content(engine, ts_filtered, x_axis, x_title, signal, 
     fig.update_yaxes(title_text=active_target, row=1, col=1)
     fig.update_yaxes(title_text="Residual", row=2, col=1)
     apply_chart_theme(fig)
-    st.plotly_chart(fig, )
+    st.plotly_chart(fig)
 
 
 def _render_tab_breadth(ts_filtered, x_axis, x_title) -> None:
@@ -2263,7 +2194,7 @@ def _render_tab_breadth(ts_filtered, x_axis, x_title) -> None:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=9)),
     )
     apply_chart_theme(fig_zones)
-    st.plotly_chart(fig_zones, )
+    st.plotly_chart(fig_zones)
 
     st.markdown("---")
     st.markdown("##### Signal Frequency")
@@ -2291,7 +2222,7 @@ def _render_tab_breadth(ts_filtered, x_axis, x_title) -> None:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=9)),
     )
     apply_chart_theme(fig_signals)
-    st.plotly_chart(fig_signals, )
+    st.plotly_chart(fig_signals)
 
     st.markdown("---")
     st.markdown("##### Average Z-Score")
@@ -2314,7 +2245,7 @@ def _render_tab_breadth(ts_filtered, x_axis, x_title) -> None:
         showlegend=False,
     )
     apply_chart_theme(fig_z)
-    st.plotly_chart(fig_z, )
+    st.plotly_chart(fig_z)
 
     st.markdown("---")
     st.markdown("##### Current Lookback States")
@@ -2427,7 +2358,7 @@ def _render_tab_ml_diagnostics(engine, ts_filtered, x_axis, x_title, signal, mod
                 showlegend=False,
             )
             apply_chart_theme(fig_imp)
-            st.plotly_chart(fig_imp, )
+            st.plotly_chart(fig_imp)
 
         # Feature impact history table (only show if data exists)
         if not feature_history.empty and len(feature_history) > 0:
@@ -2500,7 +2431,7 @@ def main() -> None:
 
                 # Show Run Analysis button for uploaded file
                 if not has_data:
-                    if st.button("🚀 Run Analysis", type="primary", ):
+                    if st.button("🚀 Run Analysis", type="primary"):
                         st.session_state.pop("engine", None)
                         st.session_state.pop("engine_cache", None)
                         st.session_state["data"] = df
@@ -2513,7 +2444,7 @@ def main() -> None:
 
             # Show Run Analysis button only if no data loaded yet
             if not has_data:
-                if st.button("🚀 Run Analysis", type="primary", ):
+                if st.button("🚀 Run Analysis", type="primary"):
                     with st.spinner("Loading data and running analysis..."):
                         df, error = load_google_sheet(sheet_url)
                         if error:
@@ -2634,7 +2565,7 @@ def main() -> None:
         
         # Show "Reset Analysis" button after analysis is complete
         if "run_analysis" in st.session_state and st.session_state.get("run_analysis"):
-            if st.button("🔄 Reset Analysis", type="secondary", ):
+            if st.button("🔄 Reset Analysis", type="secondary"):
                 st.session_state.pop("data", None)
                 st.session_state.pop("engine", None)
                 st.session_state.pop("engine_cache", None)
@@ -2680,10 +2611,6 @@ def main() -> None:
     active_target = st.session_state.get("active_target", target_col)
     active_features = list(st.session_state.get("active_features", staging_features))
     active_date = st.session_state.get("active_date_col", date_col)
-
-    # ── Header (Only on Landing Page) ────────────────────────────────────
-    if df is None:
-        _render_header()
 
     # ── Data staleness warning ────────────────────────────────────────────
     if active_date != "None" and active_date in df.columns:

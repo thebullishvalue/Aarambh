@@ -1,7 +1,7 @@
 # LICENSE
 
 **AARAMBH (आरंभ) — Fair Value Breadth**
-**Version 3.2.2**
+**Version 3.2.3**
 
 ---
 
@@ -74,6 +74,7 @@ For licensing inquiries or permissions, contact:
 
 | Version | Date | Status |
 |---------|------|--------|
+| 3.2.3 | 2026-04-06 | Production cleanup, dead code removal, security hardening |
 | 3.2.2 | 2026-04-05 | Production Patch |
 | 3.2.1 | 2026-04-01 | Production Release |
 | 3.2.0 | 2026 | ADAM Phase I |

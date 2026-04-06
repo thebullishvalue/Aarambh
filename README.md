@@ -1,4 +1,4 @@
-# AARAMBH (आरंभ) v3.2.2 — Fair Value Breadth
+# AARAMBH (आरंभ) v3.2.3 — Fair Value Breadth
 
 **A @thebullishvalue Product**
 
@@ -134,14 +134,14 @@ The system is complementary to **Arthagati** (mood-based sentiment), giving a 2D
 ## Code Structure
 
 ```
-correl.py (2,859 lines)
+correl.py (2,785 lines)
 │
-├── Constants & Configuration (lines 70–136)
+├── Constants & Configuration (lines 70–118)
 │   VERSION, PRODUCT_NAME, COMPANY
 │   Engine defaults: LOOKBACK_WINDOWS, MIN_TRAIN_SIZE, MAX_TRAIN_SIZE, etc.
 │   Signal thresholds: CONVICTION_STRONG, CONVICTION_MODERATE, CONVICTION_WEAK
 │   DDM parameters: DDM_LEAK_RATE, DDM_DRIFT_SCALE, DDM_LONG_RUN_VAR
-│   Default predictors, Google Sheets URL, chart theme colors
+│   Default predictors, Google Sheets URL (via secrets/env), chart theme colors
 │
 ├── Logging Infrastructure (lines 138–199)
 │   class TerminalLogger          — Curated terminal logging with progress indicators
@@ -155,12 +155,10 @@ correl.py (2,859 lines)
 │   def ornstein_uhlenbeck_estimate()     — OU params with Andrews (1993) MU correction
 │   def drift_diffusion_filter()          — Leaky DDM with mean-reverting variance
 │   def hurst_dfa()                       — Hurst via Detrended Fluctuation Analysis
-│   def andrews_median_unbiased_ar1()     — AR(1) with median-unbiased correction
 │   def detect_structural_breaks()        — Bai-Perron multiple breakpoint test
 │   def compute_conformal_zscores()       — Quantile-based z-scores (no look-ahead)
 │
-├── Helper Utilities (DRY) (lines 660–765)
-│   def _safe_array_operation()           — Safe array ops with NaN handling
+├── Helper Utilities (DRY) (lines 626–695)
 │   def _classify_zones()                 — Map z-scores to valuation zone labels
 │   def _detect_crossover_signals()       — Z-score threshold crossovers
 │   def _compute_significance()           — t-statistic and p-value computation
@@ -263,7 +261,6 @@ Any tabular dataset with numeric columns. Default Google Sheet layout:
 | `ornstein_uhlenbeck_estimate` | OU params with Andrews MU correction | Andrews (1993) | Residual half-life, projection |
 | `drift_diffusion_filter` | Leaky DDM with mean-reverting variance | SPRT literature | Conviction smoothing |
 | `hurst_dfa` | Hurst via Detrended Fluctuation Analysis | Peng et al. (1994) | Mean-reversion validation |
-| `andrews_median_unbiased_ar1` | AR(1) with median-unbiased correction | Andrews (1993) | Half-life estimation |
 | `detect_structural_breaks` | Bai-Perron multiple breakpoint test | Bai & Perron (1998) | Regime detection |
 | `compute_conformal_zscores` | Quantile-based z-scores | Conformal prediction | Fat-tail preservation |
 
@@ -304,7 +301,7 @@ Conviction_bounded = 100 × tanh(Conviction_raw / 100)
 
 ---
 
-## Application Layout Guide (v3.2.2)
+## Application Layout Guide (v3.2.3)
 
 The Streamlit interface has been reorganized into **four logically flowing tabs** for optimal quantitative comprehension:
 
@@ -407,7 +404,7 @@ The app will open at `http://localhost:8501`.
 
 ### Environment Variables
 
-- **`GOOGLE_SHEET_URL`**: URL of the Google Sheet containing market data. Copy from `.env.example` to `.env` and set your sheet URL.
+- **`GOOGLE_SHEET_URL`**: URL of the Google Sheet containing market data. Set via Streamlit Cloud secrets (recommended for deployment) or create a `.env` file from `.env.example` (for local development).
 
 ---
 
@@ -422,6 +419,7 @@ The app will open at `http://localhost:8501`.
 | v3.1.0 | — | Initial ADAM Critical Fixes: Look-ahead avoidance, Bai-Perron break implementation |
 | v3.2.0 | — | Initial ADAM Phase I: True Conformal quantiles, DDM variance capped, Bai-Perron binding |
 | **v3.2.1** | **2026-04-01** | **ADAM Phase II + Phase III Production Release**: Dynamic Inverse-MAE weighting, double-bounding excision, temporal mapping fixes, Hurst safeguards, UI/UX reorganization (4-tab layout, Primary Signal above tabs, Swing-style timeframe buttons), visualization standards, code quality improvements |
+| **v3.2.3** | **2026-04-06** | **Production Cleanup**: Dead code removal (3 functions, 1 import, dead branches), security hardening (secrets file removed), code quality fixes (trailing commas, misleading comments, unused variables), comprehensive refactoring for production deployment readiness |
 | **v3.2.2** | **2026-04-05** | **Production Patch**: Devcontainer configuration corrected (entry point fixed to `correl.py`), logging standardized to use dynamic `VERSION` constant, production deployment hardening |
 
 ---

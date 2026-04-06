@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.2.3] - 2026-04-06 — Production Cleanup & Security Hardening
+
+### Removed
+- **Dead Functions**: Removed `andrews_median_unbiased_ar1()` (40 lines) and `_safe_array_operation()` (28 lines) — zero traceable references via full import/call-flow tracing
+- **Dead Imports**: Removed unused `TimeSeriesSplit` import from `sklearn.model_selection`
+- **Dead Code Branches**: Eliminated unused `inline` parameter branch in `_render_metric_card()`, unreachable `_render_header()` call in landing page path, and unused `vol_multiplier` variable in OU diagnostics
+- **Security Risk**: Deleted `.streamlit/secrets.toml` containing live Google Sheets URL — secrets now exclusively managed via Streamlit Cloud secrets or environment variables
+
+### Fixed
+- **Trailing Commas**: Cleaned up 10 trailing comma artifacts in `st.plotly_chart()` and `st.button()` calls left over from `use_container_width` removal
+- **Misleading Comment**: Corrected docstring in `_compute_multi_lookback_signals()` that referenced `shift(1)` when actual implementation uses backward-looking window slicing
+- **Unused Assignment**: Removed `sm = None` from statsmodels import fallback — variable never referenced, only `_HAS_STATSMODELS` flag is checked
+
+### Changed
+- **Import Cleanup**: Renamed `statsmodels.api as sm` to `statsmodels.api as _sm` to clarify it's only used for side-effect imports (functions are imported directly)
+- **Secrets Management**: `DEFAULT_SHEET_URL` now reads from Streamlit secrets → environment variable → empty string (no hardcoded fallback)
+- **Codebase Size**: Reduced from 2,859 to ~2,716 lines (143 lines of dead code removed)
+
+---
+
 ## [3.2.2] - 2026-04-05 — Production Deployment Hardening
 
 ### Fixed
