@@ -394,11 +394,20 @@ The sidebar is organized into **two collapsible expanders** to prevent visual ov
 # Install dependencies
 pip install -r requirements.txt
 
+# (Optional) Set environment variable for Google Sheets
+# Create a .env file from the example template
+cp .env.example .env
+# Edit .env and add your Google Sheet URL
+
 # Run Streamlit app
 streamlit run correl.py
 ```
 
 The app will open at `http://localhost:8501`.
+
+### Environment Variables
+
+- **`GOOGLE_SHEET_URL`**: URL of the Google Sheet containing market data. Copy from `.env.example` to `.env` and set your sheet URL.
 
 ---
 
