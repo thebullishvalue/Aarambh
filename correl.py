@@ -109,16 +109,11 @@ DEFAULT_PREDICTORS = (
     "US02Y", "US10Y", "US30Y", "NIFTY50_DY", "NIFTY50_PB",
 )
 
-# Google Sheets URL from Streamlit secrets or environment variable with fallback
+# Google Sheets URL from Streamlit secrets or environment variable
 try:
     DEFAULT_SHEET_URL = st.secrets.get("GOOGLE_SHEET_URL")
 except Exception:
-    DEFAULT_SHEET_URL = os.environ.get(
-        "GOOGLE_SHEET_URL",
-        "https://docs.google.com/spreadsheets/d/"
-        "1po7z42n3dYIQGAvn0D1-a4pmyxpnGPQ13TrNi3DB5_c/"
-        "edit?gid=1938234952#gid=1938234952"
-    )
+    DEFAULT_SHEET_URL = os.environ.get("GOOGLE_SHEET_URL", "")
 
 # Chart theme
 CHART_BG = "#1A1A1A"
