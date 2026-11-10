@@ -1,0 +1,11 @@
+# Theme matching the @thebullishvalue design system in correl.py. The app hides the
+# Streamlit menu, so users cannot switch themes themselves: dark is set here.
+[theme]
+base = "dark"
+primaryColor = "#FFC300"
+backgroundColor = "#0F0F0F"
+secondaryBackgroundColor = "#1A1A1A"
+textColor = "#EAEAEA"
+
+[browser]
+gatherUsageStats = false

@@ -1,10 +1,10 @@
 {
-  "name": "Aarambh v2.0",
+  "name": "Aarambh v3.3.0",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
-  "postCreateCommand": "pip install -r requirements.txt",
+  "postCreateCommand": "pip install -r requirements.txt -r requirements-dev.txt",
   "forwardPorts": [8501],
   "portsAttributes": {
     "8501": { "label": "Streamlit", "onAutoForward": "openBrowser" }
   },
-  "postStartCommand": "streamlit run aarambh.py --server.port 8501"
+  "postStartCommand": "streamlit run correl.py --server.port 8501"
 }
