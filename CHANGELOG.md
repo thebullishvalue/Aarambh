@@ -7,11 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [3.3.0] - 2026-11-10 — System Audit
 
-### Fixed
-- **Date Parsing (DD/MM/YYYY)**: The date column was parsed with `pd.to_datetime()` and no format, so pandas inferred MM/DD/YYYY from the sheet's first date (`08/06/2006`). Every date with a day above 12 became NaT and was dropped (3,054 of 5,042 rows in the default sheet), and the remaining rows had day and month swapped, which scrambled the series order, pushed the latest date into the future, and silenced the stale-data warning. New `parse_dates()` picks one format for the whole column (most rows parsed → chronological order → day-first) and is used by both `clean_data()` and the staleness check
-- **Duplicate Dates**: `clean_data()` now keeps only the first row per date after a stable sort, and the app shows a warning naming the repeated dates, so a mistyped date can no longer splice an observation into the wrong point in the series
+Full audit of idea, implementation and output against the live source sheet. Evidence for every item is in `AUDIT.md`. Signals change materially: conviction thresholds now sit on a calibrated scale, and the history no longer contains back-filled data.
+
+### Fixed — Critical
+- **Date Parsing (DD/MM/YYYY)**: `pd.to_datetime()` inferred MM/DD/YYYY from the sheet's first date (`08/06/2006`), so 3,054 of 5,042 rows were dropped and the rest scrambled. `parse_dates()` picks one format for the whole column. Repeated dates keep their first row and are named in a warning.
+- **z-Score Calibration**: z divided the 2.5–97.5 percentile range by 1.35 (the 25–75 IQR constant), so the std of z ranged from 1.61 (5-day) to 0.49 (100-day) and "Overvalued" meant ≈2.9σ. Replaced by a robust gap score (median, IQR/1.349) ranked against its own past (`calibrated_zscores`): std ≈ 1.0 and ≈32% / ≈5% of days beyond ±1 / ±2 in every lookback.
+- **Look-Ahead via Back-Fill**: `clean_data` back-filled predictors, so INIRYY's first value (June 2013) filled 34.5% of history and 2008 yields filled 2006–07. Now forward-fill only; rows before the latest-starting predictor are trimmed and the app says which one set the start.
+- **In-Sample Ensemble Weights**: "out-of-sample" inverse-MAE weights were computed on rows inside the training window. Now each model's true out-of-sample errors over the previous 60 rows, with a 5% floor on normalised weights.
+- **OU Bias Correction Sign**: the AR(1) correction subtracted (1+3a)/n instead of adding it, doubling the downward bias; the headline used a 60-row window (displayed half-life 2 d). Now Kendall's correction, exact σ for every a, current = trailing 252 rows with the full sample alongside.
+
+### Fixed — High
+- **Break Detection Never Ran**: it imported a statsmodels module that does not exist, which also made the UI report "statsmodels missing". The design applied full-sample breaks to earlier dates (look-ahead). Removed.
+- **Overlapping-Window t-Stats**: signal performance used plain t-tests on overlapping 5/10/20-row changes, and a different rule from the live signal. Now Newey-West HAC regressions on the live BUY/SELL rule, with episodes, edge vs neutral days and hit rate.
+- **OU Projection Band**: it covered θ uncertainty only and could explode. Now the OU predictive band.
+- **DFA**: applied to residual levels over n/10…n/4 and forced to 0.5 when ADF p > 0.05. Now DFA-1 on the gap's daily changes with log-spaced scales 10…n/4.
+- **DDM**: the code did not match its documented equation (gain 1.875), was seeded from the next 20 observations, and used an ad-hoc variance. Now a unit-gain leaky accumulator starting at the first observation, with a real standard error band.
+- **Reproducibility**: the refit interval depended on total sample length (`n // 200`) and ElasticNet ran unseeded random descent. Now a fixed `REFIT_INTERVAL = 5` and `random_state=0`.
+- **Unfounded Claims**: interpretation text asserted historical performance that was never computed. Every signal sentence now quotes its measured track record.
+
+### Fixed — Medium & Operations
+- One threshold vocabulary (`classify_conviction`) for signal, regime, cards and charts.
+- Feature-impact history had one entry; it now records the ensemble's effective standardized coefficients at every refit and charts them.
+- θ "stability" compared near-identical overlapping windows (always stable); replaced by a rolling half-life chart and a 2× consistency flag.
+- Divergence badge only checked the last row; it now covers the last 5. Causal expanding std.
+- Percentage and thousands-separator text columns (e.g. `NIFTY50_EY`) are converted to numbers.
+- "R² vs random walk" (same-day fair value vs yesterday's actual) replaced by Gap edge and Signal edge with HAC t.
+- Apply Configuration moved out of the predictors expander and lists every pending change. Reset Analysis clears the sheet cache.
+- Warm-up rows have no fair value instead of an expanding mean.
+- The app crashed at startup without `secrets.toml`; `set_page_config` now comes first, and secrets are read only if a file exists.
+- The devcontainer ran a non-existent `aarambh.py`; it now runs `correl.py`.
+- Added `.streamlit/config.toml` (dark theme; the menu is hidden so users could not switch), `.streamlit/secrets.toml.example`, `.gitignore`. The selected timeframe is highlighted.
+
+### Added
+- **Model memory** option: Adaptive (500 rows, 252-row half-life weights; default) or Long (all history, equal weights).
+- **Track record** on the signal card and interpretation card, plus Gap edge and Signal edge cards.
+- Notices for every change the cleaner makes (repeated dates, unreadable dates, missing targets, trimmed rows and why).
+- A flag when predictors share the target's index price (e.g. NIFTY50_PB / NIFTY50_DY for NIFTY50_PE).
+- `tests/`: 44 tests including no look-ahead (truncated refit reproduces the past exactly) and planted-edge detection.
+
+### Changed
+- Split into the `aarambh/` package (`config`, `data`, `stats`, `engine`) and a UI-only `correl.py` (still the entry point).
+- `clean_data()` returns `(data, CleanReport)`.
+- Names match the maths: Kendall (not Andrews) bias correction, leaky accumulator (not SPRT), calibrated (conformal) z-scores.
 
 ---
 

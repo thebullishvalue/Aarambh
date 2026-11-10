@@ -74,6 +74,7 @@ For licensing inquiries or permissions, contact:
 
 | Version | Date | Status |
 |---------|------|--------|
+| 3.3.0 | 2026-11-10 | System audit: correctness fixes, validation, tests |
 | 3.2.3 | 2026-04-06 | Production cleanup, dead code removal, security hardening |
 | 3.2.2 | 2026-04-05 | Production Patch |
 | 3.2.1 | 2026-04-01 | Production Release |
@@ -83,7 +84,7 @@ For licensing inquiries or permissions, contact:
 
 ---
 
-**Last Updated:** 2026-04-05
+**Last Updated:** 2026-11-10
 
 **By using this software, you acknowledge that you have read, understood, and agree to be bound by these terms and conditions.**
 

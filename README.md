@@ -1,8 +1,8 @@
-# AARAMBH (आरंभ) v3.2.3 — Fair Value Breadth
+# AARAMBH (आरंभ) v3.3.0 — Fair Value Breadth
 
 **A @thebullishvalue Product**
 
-Walk-forward valuation analysis for market reversals. Identifies where market turns BEGIN using out-of-sample ensemble fair value modeling, Ornstein-Uhlenbeck mean-reversion physics with Andrews (1993) median-unbiased estimation, and Drift-Diffusion (DDM) evidence accumulation with mean-reverting variance.
+Walk-forward valuation analysis for market reversals. Aarambh estimates an out-of-sample fair value for a target (default: NIFTY50 PE), measures the gap between actual and fair, scores that gap across five lookbacks on one calibrated scale, accumulates the agreement into a conviction score, and reports what the target did after every past signal.
 
 ---
 
@@ -14,7 +14,7 @@ Walk-forward valuation analysis for market reversals. Identifies where market tu
 4. [Data Schema](#data-schema)
 5. [Mathematical Primitives](#mathematical-primitives)
 6. [Key Equations](#key-equations)
-7. [Application Layout Guide](#application-layout-guide-v322)
+7. [Application Layout Guide](#application-layout-guide)
 8. [Running the Application](#running-the-application)
 9. [Version History](#version-history)
 10. [References](#references)
@@ -23,11 +23,17 @@ Walk-forward valuation analysis for market reversals. Identifies where market tu
 
 ## What It Does
 
-Aarambh answers one question: **"Is the market's price justified by its fundamentals right now?"**
+Aarambh answers one question: **"Is the market's price justified by its predictors right now, and has that kind of reading preceded reversals before?"**
 
-It computes a theoretical "Fair Value" for any target variable (typically NIFTY50 PE ratio) using macro predictors (yields, breadth, valuations), then measures the gap between actual and fair. When the gap stretches to extreme levels across *multiple timeframes simultaneously*, it signals a high-conviction reversal origin.
+1. **Fair value.** An ensemble regression is refitted every 5 rows on earlier data only, and predicts each row's fair value of the target from that row's predictors.
+2. **Gap.** Actual − fair value, strictly out of sample.
+3. **Breadth.** The gap is scored against its trailing 5/10/20/50/100-row range. Each score is ranked against its own history, so |z| > 1 means the same thing in every lookback (≈32% of days) and |z| > 2 marks the extreme ≈5%.
+4. **Conviction.** The net share of lookbacks flagging overvalued vs undervalued, smoothed by a leaky accumulator and soft-bounded to ±100. Beyond ±20 a signal is WEAK, ±40 MODERATE, ±60 STRONG.
+5. **Track record.** For every signal the app shows how the target moved over the next 5/10/20 rows after past signals of that type, with Newey-West t-statistics that allow for overlapping windows. The system checks its own claim instead of asserting it.
 
-The system is complementary to **Arthagati** (mood-based sentiment), giving a 2D view: Arthagati says "how does the market *feel*", Aarambh says "how does the market *value*."
+The system is complementary to **Arthagati** (mood-based sentiment), giving a 2D view: Arthagati says how the market *feels*, Aarambh says how it is *valued*.
+
+See [`AUDIT.md`](AUDIT.md) for the v3.3.0 audit: what was wrong in v3.2.3, the evidence, and what the corrected system measures on the source sheet.
 
 ---
 
@@ -37,180 +43,97 @@ The system is complementary to **Arthagati** (mood-based sentiment), giving a 2D
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         1. DATA INGESTION LAYER                             │
-│  Google Sheets / CSV / Excel → Cleaning → Chronological Sorting → F-Fill   │
-│  Functions: load_google_sheet(), clean_data()                               │
+│  1. DATA INGESTION                                       aarambh/data.py    │
+│  Google Sheet / CSV / Excel → numeric text ("6.48%", "1,234") → numbers     │
+│  One date format per column → sort → drop repeated dates (keep first)       │
+│  Forward-fill predictors only (never back-fill) → trim rows before the      │
+│  latest-starting predictor → report every change to the user               │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    2. STRUCTURAL BREAK DETECTION                            │
-│  Bai-Perron multiple breakpoint test → Regime-aware window resetting        │
-│  Function: detect_structural_breaks()                                       │
+│  2. WALK-FORWARD ENSEMBLE REGRESSION          FairValueEngine (engine.py)   │
+│  Refit every 5 rows on rows < t · Memory: adaptive (500 rows, 252-row       │
+│  half-life weights) or long (all history, equal weights)                    │
+│  Ridge · Huber · ElasticNet · PCA→WLS, weighted by inverse trailing         │
+│  out-of-sample MAE (60 rows, 5% floor) → fair value, model disagreement     │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                  3. WALK-FORWARD ENSEMBLE REGRESSION                        │
-│  Expanding window (252-day exponential decay) · Sequential execution        │
-│  FairValueEngine._walk_forward_regression()                                 │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Ensemble: RidgeCV · HuberRegressor · ElasticNetCV · PCA+WLS        │   │
-│  │  Dynamic Inverse-MAE weighting with 5% baseline floor               │   │
-│  │  Output: OOS Fair Value · Model Spread (disagreement)               │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  3. CALIBRATED MULTI-LOOKBACK Z-SCORES                 stats.calibrated_z…  │
+│  score_t = (gap_t − median(previous L)) / (IQR(previous L) / 1.349)         │
+│  z_t = Φ⁻¹(rank of score_t among all earlier scores) for L = 5…100          │
+│  Zones: |z|>1 over/undervalued · |z|>2 extreme · crossings of ±1            │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│              4. MULTI-LOOKBACK CONFORMAL Z-SCORES                           │
-│  Lookbacks: 5D, 10D, 20D, 50D, 100D · No look-ahead bias                  │
-│  FairValueEngine._compute_multi_lookback_signals()                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Empirical quantile normalization (fat-tail preservation)           │   │
-│  │  Zone Classification: Extreme Under → Under → Fair → Over → Extreme │   │
-│  │  Crossover signal detection (±1σ threshold)                         │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
+│  4. BREADTH & CONVICTION                        stats.drift_diffusion_filter│
+│  Raw = (OB% − OS%) + ½(ExtremeOB% − ExtremeOS%)   ∈ [−150, 150]             │
+│  Leaky accumulator s_t = (1−λ)s_{t−1} + λ·Raw_t, λ = 0.08, ± 95% std error  │
+│  Bounded = 100·tanh(s/100) → classify_conviction → BUY / SELL / HOLD        │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    5. BREADTH AGGREGATION                                   │
-│  FairValueEngine._compute_breadth_metrics()                                 │
-│  Oversold% = % lookbacks in undervalued zones                               │
-│  Overbought% = % lookbacks in overvalued zones                              │
-│  Raw Conviction = OB% - OS% + 0.5×(Extreme OB - Extreme OS)                 │
+│  5. GAP DIAGNOSTICS                                                         │
+│  OU fit (Kendall bias-corrected AR(1)): current 252 rows + full sample,     │
+│  rolling half-life, 90-row projection with OU predictive band               │
+│  ADF / KPSS (statsmodels) · DFA α of the gap's daily changes                │
+│  Swing divergences (target lower low, gap higher low, and the reverse)      │
+│  Effective ensemble coefficients per predictor, recorded at every refit     │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│              6. DRIFT-DIFFUSION FILTER                                      │
-│  FairValueEngine._compute_ddm_conviction()                                  │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  State:  s_t = (1-λ)×s_{t-1} + λ×drift_t                            │   │
-│  │  Var:    σ²_t = (1-λ)×σ²_{t-1} + λ×σ²_LR + 0.5×|drift_t|            │   │
-│  │  Output: Smoothed conviction · 95% confidence bands · ±100 bounds   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  7. OU MEAN-REVERSION DIAGNOSTICS                           │
-│  FairValueEngine._compute_ou_diagnostics()                                  │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Andrews (1993) Median-Unbiased AR(1) Estimator                     │   │
-│  │  Rolling θ estimation (60-day window) → Projection bands            │   │
-│  │  ADF/KPSS stationarity tests → 90-day forward path                  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  8. DIVERGENCE & PIVOT DETECTION                            │
-│  FairValueEngine._find_pivots(), _compute_divergences()                     │
-│  Swing-based extremum detection → Bullish/Bearish divergence flags          │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  9. HURST EXPONENT (DFA)                                    │
-│  FairValueEngine._compute_hurst()                                           │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  Detrended Fluctuation Analysis (Peng et al., 1994)                 │   │
-│  │  ADF stationarity guard → H < 0.5 (MR) / ≈0.5 (RW) / >0.5 (Trend)  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  10. SIGNAL PERFORMANCE ANALYSIS                            │
-│  FairValueEngine.get_signal_performance()                                   │
-│  Forward change analysis at 5D, 10D, 20D · t-statistics & p-values          │
+│  6. VALIDATION                                  _compute_validation()       │
+│  Forward % change of the target at 5/10/20 rows                             │
+│  HAC regression on BUY/SELL dummies → edge vs neutral days, t, episodes     │
+│  Gap edge and Signal edge = −corr with next-20-row change, HAC t            │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Causality contract.** Every column of `ts_data` except `FwdChg_*` uses only data up to its own row. `tests/test_engine.py::test_no_look_ahead` refits on a truncated sample and requires the past to be reproduced exactly.
 
 ---
 
 ## Code Structure
 
 ```
-correl.py (2,785 lines)
-│
-├── Constants & Configuration (lines 70–118)
-│   VERSION, PRODUCT_NAME, COMPANY
-│   Engine defaults: LOOKBACK_WINDOWS, MIN_TRAIN_SIZE, MAX_TRAIN_SIZE, etc.
-│   Signal thresholds: CONVICTION_STRONG, CONVICTION_MODERATE, CONVICTION_WEAK
-│   DDM parameters: DDM_LEAK_RATE, DDM_DRIFT_SCALE, DDM_LONG_RUN_VAR
-│   Default predictors, Google Sheets URL (via secrets/env), chart theme colors
-│
-├── Logging Infrastructure (lines 138–199)
-│   class TerminalLogger          — Curated terminal logging with progress indicators
-│   class StreamlitLogHandler     — Custom handler for Streamlit environment
-│
-├── Streamlit Page Config & CSS (lines 201–383)
-│   st.set_page_config()
-│   Premium CSS: @thebullishvalue Design System, signal cards, metric cards, tables
-│
-├── Mathematical Primitives (lines 385–658)
-│   def ornstein_uhlenbeck_estimate()     — OU params with Andrews (1993) MU correction
-│   def drift_diffusion_filter()          — Leaky DDM with mean-reverting variance
-│   def hurst_dfa()                       — Hurst via Detrended Fluctuation Analysis
-│   def detect_structural_breaks()        — Bai-Perron multiple breakpoint test
-│   def compute_conformal_zscores()       — Quantile-based z-scores (no look-ahead)
-│
-├── Helper Utilities (DRY) (lines 626–695)
-│   def _classify_zones()                 — Map z-scores to valuation zone labels
-│   def _detect_crossover_signals()       — Z-score threshold crossovers
-│   def _compute_significance()           — t-statistic and p-value computation
-│   def _apply_conviction_bounds()        — Soft tanh bounds for conviction scores
-│
-├── FairValueEngine Class (lines 767–1660)
-│   │
-│   ├── Public API
-│   │   def fit()                         — Full walk-forward pipeline orchestration
-│   │   def get_current_signal()          — Current composite signal derivation
-│   │   def get_model_stats()             — Model fit statistics
-│   │   def get_regime_stats()            — Regime distribution counts
-│   │   def get_signal_performance()      — Forward returns with significance testing
-│   │   def get_feature_impact_history()  — Time-series of feature impacts
-│   │
-│   ├── Walk-Forward Regression (Private)
-│   │   def _walk_forward_regression()    — Expanding-window ensemble with dynamic refit
-│   │   def _process_wf_chunk()           — Single chunk processing with break awareness
-│   │   def _fit_ensemble()               — Ridge + Huber + ElasticNet + PCA-WLS fitting
-│   │   def _predict_ensemble()           — Vectorized prediction with inverse-MAE weighting
-│   │   def _compute_feature_impacts()    — PCA back-projection to original features
-│   │
-│   ├── Analytics Pipeline (Private)
-│   │   def _compute_model_stats()        — OOS R², RMSE, MAE, R² vs Random Walk
-│   │   def _compute_multi_lookback_signals() — Conformal z-scores per lookback
-│   │   def _compute_breadth_metrics()    — Oversold/Overbought breadth aggregation
-│   │   def _compute_ddm_conviction()     — Drift-Diffusion filtering with bounds
-│   │   def _compute_divergences()        — Swing-based divergence detection
-│   │   def _find_pivots()                — Pivot high/low identification
-│   │   def _compute_forward_changes()    — Winsorized forward returns
-│   │   def _compute_ou_diagnostics()     — OU estimation with rolling θ
-│   │   def _compute_hurst()              — DFA Hurst with ADF stationarity guard
-│
-├── Data Utilities (lines 1662–1730)
-│   @st.cache_data load_google_sheet()    — Google Sheets CSV extraction
-│   def clean_data()                      — Column selection, coercion, cleaning
-│   def apply_chart_theme()               — @thebullishvalue dark theme for Plotly figures
-│
-├── UI Rendering (lines 1732–2463)
-│   def _render_header()                  — Premium header banner
-│   def _render_landing_page()            — Pre-analysis landing page (3 feature cards)
-│   def _render_footer()                  — Copyright + version footer
-│   def _render_metric_card()             — DRY helper for consistent metric cards
-│   def _render_primary_signal()          — Always-visible signal card above tabs
-│   def _render_tab_dashboard_content()   — Dashboard tab (6 rows)
-│   def _render_tab_breadth()             — Breadth Topology tab
-│   def _render_tab_data()                — Data Table tab with export
-│   def _render_tab_ml_diagnostics()      — ML Diagnostics tab
-│
-└── Main Application (lines 2465–2859)
-    def main()                            — Sidebar config, data loading, engine orchestration,
-                                          — tab layout, timeframe filtering, caching
+correl.py                 Streamlit app (entry point): CSS, rendering, sidebar, main()
+aarambh/
+├── config.py             Every tunable constant (windows, thresholds, memory, horizons)
+├── data.py               parse_dates, coerce_numeric_frame, sheet_csv_url, load_sheet,
+│                         read_upload, clean_data → (data, CleanReport)
+├── stats.py              ornstein_uhlenbeck_estimate, ou_forecast, half_life,
+│                         drift_diffusion_filter, soft_bound, hurst_dfa,
+│                         robust_gap_scores, calibrated_zscores, classify_zones,
+│                         detect_crossover_signals, newey_west_ols,
+│                         information_coefficient, count_episodes
+└── engine.py             classify_conviction, FairValueEngine
+                            fit() → walk-forward → gap → z → breadth → conviction
+                                  → pivots/divergences → forward changes → OU → DFA
+                                  → validation
+                            get_current_signal() · get_model_stats() · get_regime_stats()
+                            get_signal_performance() · get_feature_impact_history()
+tests/                    44 tests: data cleaning, calibration, OU, DFA, HAC, no look-ahead,
+                          planted-edge detection
+.streamlit/config.toml    Dark theme matching the design system
+```
+
+The engine has no Streamlit dependency and can be used directly:
+
+```python
+from aarambh.data import clean_data, load_sheet
+from aarambh.engine import FairValueEngine
+
+df, err = load_sheet(SHEET_URL)
+data, report = clean_data(df, "NIFTY50_PE", ["IN10Y", "REPO", "US10Y"], "DATE")
+engine = FairValueEngine(memory="adaptive").fit(data[["IN10Y", "REPO", "US10Y"]].values,
+                                                data["NIFTY50_PE"].values,
+                                                feature_names=["IN10Y", "REPO", "US10Y"])
+engine.get_current_signal(), engine.validation
 ```
 
 ---
@@ -219,194 +142,151 @@ correl.py (2,785 lines)
 
 ### Input
 
-Any tabular dataset with numeric columns. Default Google Sheet layout:
+Any table with a date column and numeric columns. Default Google Sheet layout:
 
 | Column | Description | Role |
 |--------|-------------|------|
-| DATE | Trading date | Index |
+| DATE | Trading date (DD/MM/YYYY) | Index |
 | NIFTY50_PE | Nifty 50 Price-to-Earnings | Default target |
-| AD_RATIO | Advance/Decline ratio | Predictor |
-| REL_AD_RATIO | Relative A/D ratio | Predictor |
-| REL_BREADTH | Relative breadth | Predictor |
-| COUNT | Market breadth count | Predictor |
-| IN10Y, IN02Y, IN30Y | Indian yields | Predictors |
+| AD_RATIO, REL_AD_RATIO, REL_BREADTH, COUNT | Breadth and price-action internals | Predictors |
+| IN10Y, IN02Y, IN30Y, INIRYY, REPO | Indian yields, inflation, policy rate | Predictors |
 | US10Y, US02Y, US30Y | US yields | Predictors |
-| NIFTY50_DY, NIFTY50_PB | Valuation metrics | Predictors |
+| NIFTY50_DY, NIFTY50_PB | Valuation multiples | Predictors (see note) |
 
-The date column is parsed with one format for the whole column (DD/MM/YYYY, MM/DD/YYYY, ISO and a few others are detected; DD/MM/YYYY wins when the data is ambiguous). Rows are sorted by date, and if a date appears twice only the first row is used.
+The default predictors mirror the variables marked `SELECTOR = 1` in the sheet's own model. **Note:** NIFTY50_PB and NIFTY50_DY contain the same index price as NIFTY50_PE, so a fair value built on them partly follows the price it is meant to judge. The app flags this next to the drivers chart.
 
-### Engine Output (ts_data)
+### Cleaning rules (`clean_data`)
+
+1. **Dates:** one format for the whole column (DD/MM/YYYY, MM/DD/YYYY, ISO and others detected; DD/MM/YYYY wins when the data is ambiguous). Unreadable dates are skipped and counted.
+2. **Order:** rows are sorted by date. A repeated date keeps its first row, and the app names the repeated dates.
+3. **Numbers:** text like `6.48%` or `24,536.60` becomes a number on load.
+4. **Target:** rows without a target value are dropped. The target is never invented.
+5. **Predictors:** gaps are forward-filled. **Nothing is back-filled.** Rows before the latest-starting predictor are trimmed, and the app says which predictor set the start date (on the default sheet INIRYY sets it to 12 Jun 2013).
+
+### Engine Output (`ts_data`)
 
 | Column | Type | Description |
 |--------|------|-------------|
-| Actual | float | Target variable value |
-| FairValue | float | Walk-forward ensemble prediction (OOS) |
-| Residual | float | Actual − FairValue (OOS gap) |
-| ModelSpread | float | Std across Ridge/Huber/ElasticNet/WLS predictions |
-| Z_{5,10,20,50,100} | float | Conformal z-score at each lookback (no look-ahead) |
-| Zone_{5,10,20,50,100} | str | Classification per lookback |
-| ConvictionScore | float | DDM-filtered conviction (mean-reverting var) |
-| ConvictionBounded | float | Soft-bounded conviction (±100 via tanh) |
-| ConvictionUpper/Lower | float | 95% DDM confidence bands |
-| OversoldBreadth | float | % lookbacks in undervalued zones |
-| OverboughtBreadth | float | % lookbacks in overvalued zones |
-| Regime | str | STRONGLY OVERSOLD / OVERSOLD / NEUTRAL / OVERBOUGHT / STRONGLY OVERBOUGHT |
-| BullishDiv / BearishDiv | bool | Swing-based divergence flags |
-| FwdChg_{5,10,20} | float | Forward % change (winsorized ±100%) |
+| Actual | float | Target value |
+| FairValue | float | Walk-forward ensemble prediction (NaN for the first 20 rows) |
+| Residual | float | The gap: Actual − FairValue |
+| ModelSpread | float | Std across the ensemble's model predictions |
+| Z_{5,10,20,50,100} | float | Calibrated z-score of the gap per lookback |
+| Zone_{…} / Buy_{…} / Sell_{…} | str / bool | Zone label; crossing of ∓1 |
+| OversoldBreadth / OverboughtBreadth | float | % of lookbacks with z < −1 / z > +1 |
+| ExtremeOversold / ExtremeOverbought | float | % of lookbacks with z < −2 / z > +2 |
+| AvgZ | float | Mean z across lookbacks |
+| ConvictionRaw | float | (OB% − OS%) + ½(XOB% − XOS%) |
+| ConvictionScore | float | Leaky-accumulated raw conviction |
+| ConvictionBounded | float | 100·tanh(score/100): the signal input |
+| ConvictionUpper / Lower | float | 95% band from the accumulator's standard error |
+| Regime | str | NEUTRAL / OVERSOLD / OVERBOUGHT / STRONGLY … (N/A in warm-up) |
+| IsPivotTop / IsPivotBottom | bool | Swing points of the gap, on the confirming row |
+| BullishDiv / BearishDiv | bool | Target/gap swing divergences, on the confirming row |
+| FwdChg_{5,10,20} | float | Forward % change of the target (the outcome; future by definition) |
 
 ---
 
 ## Mathematical Primitives
 
-| Function | Purpose | Reference | Used In |
-|----------|---------|-----------|---------|
-| `ornstein_uhlenbeck_estimate` | OU params with Andrews MU correction | Andrews (1993) | Residual half-life, projection |
-| `drift_diffusion_filter` | Leaky DDM with mean-reverting variance | SPRT literature | Conviction smoothing |
-| `hurst_dfa` | Hurst via Detrended Fluctuation Analysis | Peng et al. (1994) | Mean-reversion validation |
-| `detect_structural_breaks` | Bai-Perron multiple breakpoint test | Bai & Perron (1998) | Regime detection |
-| `compute_conformal_zscores` | Quantile-based z-scores | Conformal prediction | Fat-tail preservation |
+| Function | Purpose | Reference |
+|----------|---------|-----------|
+| `ornstein_uhlenbeck_estimate` | OU θ, μ, σ from a bias-corrected AR(1) | Kendall (1954) |
+| `ou_forecast` | OU mean path and predictive std h steps ahead | — |
+| `drift_diffusion_filter` | Unit-gain leaky accumulator with standard error | EWMA / leaky integrator |
+| `hurst_dfa` | DFA-1 scaling exponent | Peng et al. (1994) |
+| `calibrated_zscores` | Robust gap score ranked against its own past (conformal) | Vovk et al. (2005) |
+| `newey_west_ols` | OLS with Bartlett HAC standard errors | Newey & West (1987) |
 
 ---
 
 ## Key Equations
 
-### Ornstein-Uhlenbeck Process
+### Ornstein-Uhlenbeck gap
 ```
-dx = θ(μ - x)dt + σdW
+dx = θ(μ − x)dt + σdW        sampled as  x_t − μ = a(x_{t−1} − μ) + ε,  a = e^{−θ}
+â (OLS) → a = â + (1 + 3â)/n                 (Kendall bias correction)
+σ² = Var(ε) · 2θ / (1 − a²)      half-life = ln 2 / θ
+E[x_{t+h}] = μ + (x_t − μ)e^{−θh}      Var = σ²(1 − e^{−2θh}) / 2θ
 ```
-- **θ (theta)**: Mean-reversion speed (Andrews MU corrected)
-- **μ (mu)**: Equilibrium level (long-run mean)
-- **σ (sigma)**: Volatility of innovations
-- **Half-life**: t₁/₂ = ln(2) / θ
 
-### Drift-Diffusion Filter
+### Calibrated z-score (lookback L)
 ```
-State:  s_t = (1 - λ) × s_{t-1} + λ × drift_t
-Variance: σ²_t = (1 - λ) × σ²_{t-1} + λ × σ²_LR + 0.5 × |drift_t|
+score_t = (gap_t − median(gap_{t−L..t−1})) / (IQR(gap_{t−L..t−1}) / 1.349)
+z_t     = Φ⁻¹( (#{past scores < score_t} + ½·#{= score_t} + ½) / (m + 1) )
 ```
-- **λ (leak_rate)**: 0.08 (calibrated)
-- **σ²_LR**: Long-run variance (100.0 for conviction scores)
 
-### DFA Hurst Exponent
+### Conviction
 ```
-F(s) = √(1/s × Σ(RMS_detrended²))
-H = slope of log(F(s)) vs log(s)
+Raw_t  = (OB% − OS%) + 0.5 × (ExtremeOB% − ExtremeOS%)
+s_t    = (1 − λ)s_{t−1} + λ·Raw_t,           λ = 0.08 (≈ 8-row half-life)
+v_t    = (1 − λ)v_{t−1} + λ(Raw_t − s_{t−1})²
+band   = s_t ± 1.96 √(λ/(2 − λ) · v_t)
+Bounded = 100 × tanh(s_t / 100)
 ```
-- **H < 0.5**: Mean-reverting
-- **H ≈ 0.5**: Random walk
-- **H > 0.5**: Trending
 
-### Conviction Score (Soft-Bounded)
+### DFA exponent (of the gap's daily changes)
 ```
-Conviction_bounded = 100 × tanh(Conviction_raw / 100)
+F(s) = RMS of the linearly detrended profile in windows of size s
+α    = slope of log F(s) on log s       α < 0.5 mean-reverting · ≈ 0.5 random walk · > 0.5 trending
+```
+
+### Signal edge
+```
+FwdChg_h,t = β₀ + β_B·BUY_t + β_S·SELL_t + u_t      Newey-West(h) standard errors
+BUY edge = β_B,  SELL edge = −β_S                    (positive = moved the signal's way)
 ```
 
 ---
 
-## Application Layout Guide (v3.2.3)
+## Application Layout Guide
 
-The Streamlit interface has been reorganized into **four logically flowing tabs** for optimal quantitative comprehension:
+Above the tabs, always visible: **data notices** (repeated dates, rows trimmed and why, staleness), then the **primary signal card**: BUY/SELL/HOLD, strength, breadth agreement, gap half-life, divergence badge, and a "Why this signal?" line that quotes the signal's own track record. Below it, the timeframe buttons (1M, 6M, 1Y, 2Y, ALL) filter every chart.
 
 ### 📊 Dashboard
-**Purpose:** Main execution view — clean information flow from signal → conviction → regime → valuation.
-
-**Layout Structure (6 Rows):**
-
-**Row 1 — Primary Signal (Full Width):**
-- Large signal card showing BUY/SELL/HOLD with strength, confidence, OU half-life, and divergence badges
-
-**Row 2 — Base Conviction Score (Full Width):**
-- *The core signal generator* — Raw breadth differential (Oversold% − Overbought%) across all lookbacks
-- Full-width chart with zone shading and **threshold markers**:
-  - **Bright Green dots (●)**: Conviction < −40 (Strong oversold)
-  - **Dim Green dots (●)**: Conviction −20 to −40 (Moderate oversold)
-  - **Dim Red dots (●)**: Conviction +20 to +40 (Moderate overbought)
-  - **Bright Red dots (●)**: Conviction > +40 (Strong overbought)
-
-**Row 3 — SPRT DDM Confidence Boundaries (Full Width):**
-- *The smoothed signal* — Drift-Diffusion accumulation with mean-reverting variance
-- 95% confidence bands shown as shaded gold region
-
-**Row 4 — Market State (3 cards + table + context):**
-- **Cards:** Oversold Breadth %, Overbought Breadth %, Current Regime (with OU t½)
-- **Table:** Regime distribution history (Strongly OS → Strongly OB)
-- **Context Box:** Plain-language interpretation of current regime
-
-**Row 5 — Model Quality (4 cards):**
-- OOS R², R² vs Random Walk, DFA Hurst, Model Spread
-
-**Row 6 — Fair Value Plot (Full Width):**
-- Actual vs Walk-Forward Fair Value with model uncertainty bands and OU 90-day projection
-
-**When to use:** Start here for comprehensive real-time snapshot of market valuation, conviction trajectory, and actionable signals.
-
----
+1. **Base Conviction Score**: raw breadth differential (±150) with ±20/±40 markers.
+2. **Conviction (Leaky Accumulator)**: the bounded signal with its 95% band and ±20/±60 lines, plus an interpretation card with the track record.
+3. **Market State**: oversold and overbought breadth, current regime, and the regime distribution of the whole history.
+4. **Model Quality**: OOS R², **Gap edge**, **Signal edge** (each with its HAC t; green t ≥ 2, red t ≤ −2), and model spread relative to RMSE.
+5. **Actual vs Fair Value**: with model disagreement; below, the gap with its OU projection and 95% predictive band.
 
 ### 🗺️ Breadth Topology
-**Purpose:** Conformal zones, extreme distributions, and signal generation across all lookback windows.
-
-**Components:**
-- **Zone Breadth Chart:** Time-series of oversold/overbought breadth percentages (5D, 10D, 20D, 50D, 100D lookbacks)
-- **Buy/Sell Signal Count:** Crossover signals when Z-score crosses ±1σ threshold — shows historical signal frequency
-- **Average Z-Score Chart:** Multi-lookback average conformal z-score with extreme thresholds (±2σ)
-- **Current Lookback Breakdown:** Real-time zone classification for each individual lookback window
-
-**When to use:** Analyze market breadth convergence/divergence across timeframes. Ideal for identifying "extreme" readings where multiple lookbacks agree and reviewing historical signal frequency.
-
----
+Oversold/overbought breadth over time, z-crossing counts, average z with ±2 lines, and the current zone of each lookback.
 
 ### 🧠 ML Diagnostics
-**Purpose:** OU mean-reversion diagnostics, feature-impact tracking, and signal performance validation.
-
-**Components:**
-- **OU Mean-Reversion Diagnostics:** Andrews (1993) median-unbiased half-life, ADF/KPSS stationarity tests, θ stability
-- **Feature Impact History:** Time-varying feature weights from PCA+WLS back-projection (shows which macro predictors drive fair value)
-- **Signal Performance Table:** Hit rates, average forward changes, and t-statistics for 5D/10D/20D holding periods
-
-**When to use:** Debug model behavior, track factor rotation, validate stationarity assumptions, and assess statistical significance of signals.
-
----
+- **Valuation-gap dynamics**: current and full-sample half-life, ADF, KPSS, DFA α, and the rolling half-life over time.
+- **Fair-value drivers**: signed effective ensemble coefficient per predictor (Δ target per 1σ); driver shares over time; ensemble weights over time. Price-sharing predictors are flagged.
+- **Signal performance**: per horizon, BUY and SELL days (episodes), average forward change, edge vs neutral days, HAC t, hit rate.
 
 ### 📋 Data Table
-**Purpose:** Underlying data streams and export functionality.
+The time series with the key columns, and a full CSV export of `ts_data`.
 
-**Components:**
-- **Time-Series Table:** Full historical data with all computed columns (FairValue, Residual, ConvictionScore, Regime, etc.)
-- **Download Button:** Export complete dataset as CSV for external analysis
-
-**When to use:** Audit raw outputs, verify calculations, or export for further research.
-
----
-
-### Sidebar Structure
-
-The sidebar is organized into **two collapsible expanders** to prevent visual overflow:
-
-1. **📊 Predictor Columns:** Select/deselect macro predictors for the ensemble model
-2. **Model Configuration:** Target variable, date column, and apply button
+### Sidebar
+1. **Data Source**: Google Sheet URL or CSV/Excel upload → Run Analysis.
+2. **Model Configuration**: target, date column, model memory, predictors (expander). Changes are staged and listed as "Pending"; **Apply Configuration** recomputes.
+3. **Reset Analysis**: clears the session and the sheet cache so a refreshed sheet is fetched.
+4. **System Information**: version, lookbacks, memory, ADF/KPSS availability.
 
 ---
 
 ## Running the Application
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
-
-# (Optional) Set environment variable for Google Sheets
-# Create a .env file from the example template
-cp .env.example .env
-# Edit .env and add your Google Sheet URL
-
-# Run Streamlit app
+export GOOGLE_SHEET_URL="https://docs.google.com/spreadsheets/d/<id>/edit#gid=<tab>"   # optional
 streamlit run correl.py
 ```
 
-The app will open at `http://localhost:8501`.
+The app opens at `http://localhost:8501`.
 
-### Environment Variables
+**Sheet URL.** The `GOOGLE_SHEET_URL` environment variable is read first, then Streamlit secrets: copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` (git-ignored), or paste it into *Streamlit Cloud → App settings → Secrets*. Without either, paste a link into the sidebar. The sheet must be shared as "Anyone with the link".
 
-- **`GOOGLE_SHEET_URL`**: URL of the Google Sheet containing market data. Set via Streamlit Cloud secrets (recommended for deployment) or create a `.env` file from `.env.example` (for local development).
+**Tests.**
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
 
 ---
 
@@ -417,12 +297,13 @@ The app will open at `http://localhost:8501`.
 | v1.0.0 | — | Initial release: in-sample regression, fixed z-scores |
 | v2.0.0 | — | Walk-forward regression, OU estimation, Kalman conviction, model disagreement, Hurst validation |
 | v2.2.0 | — | Vectorized walk-forward engine, sklearn LinearRegression swap |
-| v3.0.0 | — | ADAM Refactor: Conformal inference, Drift-Diffusion Model, decoupled OU |
-| v3.1.0 | — | Initial ADAM Critical Fixes: Look-ahead avoidance, Bai-Perron break implementation |
-| v3.2.0 | — | Initial ADAM Phase I: True Conformal quantiles, DDM variance capped, Bai-Perron binding |
-| **v3.2.1** | **2026-04-01** | **ADAM Phase II + Phase III Production Release**: Dynamic Inverse-MAE weighting, double-bounding excision, temporal mapping fixes, Hurst safeguards, UI/UX reorganization (4-tab layout, Primary Signal above tabs, Swing-style timeframe buttons), visualization standards, code quality improvements |
-| **v3.2.3** | **2026-04-06** | **Production Cleanup**: Dead code removal (3 functions, 1 import, dead branches), security hardening (secrets file removed), code quality fixes (trailing commas, misleading comments, unused variables), comprehensive refactoring for production deployment readiness |
-| **v3.2.2** | **2026-04-05** | **Production Patch**: Devcontainer configuration corrected (entry point fixed to `correl.py`), logging standardized to use dynamic `VERSION` constant, production deployment hardening |
+| v3.0.0 | — | Conformal-style z-scores, drift-diffusion conviction, decoupled OU |
+| v3.1.0 | — | Look-ahead fixes, break detection (non-functional; removed in 3.3.0) |
+| v3.2.0 | — | Quantile z-scores, DDM variance cap |
+| v3.2.1 | 2026-04-01 | Inverse-MAE ensemble weights, 4-tab UI, primary signal above tabs |
+| v3.2.2 | 2026-04-05 | Production patch: version logging |
+| v3.2.3 | 2026-04-06 | Dead-code removal, secrets file removed |
+| **v3.3.0** | **2026-11-10** | **System audit**: date parsing, calibrated z-scores, no back-fill, true OOS ensemble weights, corrected OU and DFA, HAC track record shown with every signal, model memory option, package split, 44 tests. See `AUDIT.md`. |
 
 ---
 
@@ -434,8 +315,10 @@ Proprietary — @thebullishvalue. All rights reserved. See `LICENSE.md` for full
 
 ## References
 
+- **Kendall, M. G. (1954)**. "Note on bias in the estimation of autocorrelation". *Biometrika*.
 - **Andrews, D. W. K. (1993)**. "Exactly Median-Unbiased Estimation of First Order Autoregressive/Unit Root Models". *Econometrica*.
-- **Bai, J. & Perron, P. (1998)**. "Estimating and Testing Linear Models with Multiple Structural Changes". *Econometrica*.
+- **Newey, W. K. & West, K. D. (1987)**. "A Simple, Positive Semi-Definite, Heteroskedasticity and Autocorrelation Consistent Covariance Matrix". *Econometrica*.
 - **Peng, C.-K. et al. (1994)**. "Mosaic organization of DNA nucleotides". *Physical Review E*.
+- **Vovk, V., Gammerman, A. & Shafer, G. (2005)**. *Algorithmic Learning in a Random World*. Springer.
 - **Welch, I. & Goyal, A. (2008)**. "A Comprehensive Look at the Empirical Performance of Equity Premium Prediction". *Review of Financial Studies*.
 - **Gu, S., Kelly, B., & Xiu, D. (2020)**. "Empirical Asset Pricing via Machine Learning". *Review of Financial Studies*.
