@@ -1614,13 +1614,67 @@ def load_google_sheet(sheet_url: str) -> tuple[pd.DataFrame | None, str | None]:
         return None, str(e)
 
 
+# Candidate formats for text date columns. Order is the tie-break when several
+# formats parse equally well: day-first wins over month-first, matching the
+# DD/MM/YYYY layout of the default Google Sheet.
+DATE_FORMATS = (
+    "%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d", "%Y/%m/%d",
+    "%d-%m-%Y", "%m-%d-%Y", "%d.%m.%Y",
+    "%d-%b-%Y", "%d %b %Y", "%b %d, %Y", "%d-%b-%y",
+    "%d/%m/%y", "%m/%d/%y",
+    "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S",
+)
+
+
+def parse_dates(values: pd.Series) -> pd.Series:
+    """Parse a date column using one consistent format for every row.
+
+    Plain ``pd.to_datetime`` infers the format from the first value, so a
+    DD/MM/YYYY column whose first date is ambiguous (e.g. ``08/06/2006``) is
+    read as MM/DD/YYYY: every day > 12 becomes NaT and the rest get day and
+    month swapped. Instead, try each candidate format and keep the one that
+    parses the most rows, then the one that keeps the series in order, then
+    the earlier entry in ``DATE_FORMATS``.
+    """
+    if pd.api.types.is_datetime64_any_dtype(values):
+        return values
+
+    text = values.astype("string").str.strip()
+    present = text.notna() & (text != "")
+    n_present = int(present.sum())
+    if n_present == 0:
+        return pd.to_datetime(values, errors="coerce")
+
+    best, best_key = None, None
+    for rank, fmt in enumerate(DATE_FORMATS):
+        parsed = pd.to_datetime(text, format=fmt, errors="coerce")
+        hits = int(parsed.notna().sum())
+        if hits == 0:
+            continue
+        inversions = int((parsed.dropna().diff() < pd.Timedelta(0)).sum())
+        key = (hits, -inversions, -rank)
+        if best_key is None or key > best_key:
+            best, best_key = parsed, key
+
+    if best is None or best_key[0] < n_present:
+        # Leftovers in an unexpected format: parse them one by one, day-first.
+        fallback = pd.to_datetime(text, errors="coerce", format="mixed", dayfirst=True)
+        best = fallback if best is None else best.fillna(fallback)
+    return best
+
+
 def clean_data(
     df: pd.DataFrame,
     target: str,
     features: list[str],
     date_col: str | None = None,
 ) -> pd.DataFrame:
-    """Select, coerce, and clean numeric columns; optionally parse dates."""
+    """Select, coerce, and clean numeric columns; optionally parse dates.
+
+    With a date column, rows are sorted chronologically and only the first
+    row for each date is kept, so a mistyped duplicate date cannot splice an
+    observation into the wrong place in the series.
+    """
     features = [f for f in features if f != target]
     cols = [target] + features
     if date_col and date_col in df.columns:
@@ -1633,11 +1687,9 @@ def clean_data(
     data = df[valid_cols].copy()
 
     if date_col and date_col in data.columns:
-        try:
-            data[date_col] = pd.to_datetime(data[date_col], errors="coerce")
-            data = data.dropna(subset=[date_col]).sort_values(date_col)
-        except Exception:
-            pass
+        data[date_col] = parse_dates(data[date_col])
+        data = data.dropna(subset=[date_col]).sort_values(date_col, kind="stable")
+        data = data.drop_duplicates(subset=[date_col], keep="first")
 
     for col in [target] + features:
         data[col] = pd.to_numeric(data[col], errors="coerce")
@@ -2615,7 +2667,17 @@ def main() -> None:
     # ── Data staleness warning ────────────────────────────────────────────
     if active_date != "None" and active_date in df.columns:
         try:
-            dates = pd.to_datetime(df[active_date], errors="coerce").dropna()
+            dates = parse_dates(df[active_date])
+            dup_mask = dates.notna() & dates.duplicated(keep="first")
+            if dup_mask.any():
+                dup_labels = df.loc[dup_mask, active_date].astype(str).unique().tolist()
+                shown = ", ".join(dup_labels[:5]) + (" …" if len(dup_labels) > 5 else "")
+                logger.warning("Duplicate Dates", f"{int(dup_mask.sum())} row(s) dropped: {shown}")
+                st.warning(
+                    f"⚠️ {int(dup_mask.sum())} row(s) in **{active_date}** repeat an earlier date "
+                    f"({shown}). Only the first row for each date is used; check the source data for a typo."
+                )
+            dates = dates.dropna()
             if len(dates) > 0:
                 latest_date = dates.max().to_pydatetime()
                 if latest_date.tzinfo is not None:

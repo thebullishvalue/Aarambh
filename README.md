@@ -233,6 +233,8 @@ Any tabular dataset with numeric columns. Default Google Sheet layout:
 | US10Y, US02Y, US30Y | US yields | Predictors |
 | NIFTY50_DY, NIFTY50_PB | Valuation metrics | Predictors |
 
+The date column is parsed with one format for the whole column (DD/MM/YYYY, MM/DD/YYYY, ISO and a few others are detected; DD/MM/YYYY wins when the data is ambiguous). Rows are sorted by date, and if a date appears twice only the first row is used.
+
 ### Engine Output (ts_data)
 
 | Column | Type | Description |

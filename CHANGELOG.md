@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Date Parsing (DD/MM/YYYY)**: The date column was parsed with `pd.to_datetime()` and no format, so pandas inferred MM/DD/YYYY from the sheet's first date (`08/06/2006`). Every date with a day above 12 became NaT and was dropped (3,054 of 5,042 rows in the default sheet), and the remaining rows had day and month swapped, which scrambled the series order, pushed the latest date into the future, and silenced the stale-data warning. New `parse_dates()` picks one format for the whole column (most rows parsed → chronological order → day-first) and is used by both `clean_data()` and the staleness check
+- **Duplicate Dates**: `clean_data()` now keeps only the first row per date after a stable sort, and the app shows a warning naming the repeated dates, so a mistyped date can no longer splice an observation into the wrong point in the series
+
+---
+
 ## [3.2.3] - 2026-04-06 — Production Cleanup & Security Hardening
 
 ### Removed
